@@ -41,32 +41,43 @@ typedef struct
 /* versioned_int input function
  *
  * Input functions convert string representation to type's internal memory
- * representation. In case of a versioned_int expected string representation
- * is "5".
+ * representation. This feature is disabled because of update statement.
+ * When user tries to do something like set versioned_int = '5', it would
+ * be impossible to access old value. Only way to insert/update versioned ints
+ * is to use make_versioned function.
  *
  * @author Luka
  */
 PG_FUNCTION_INFO_V1(versioned_int_in);
 Datum versioned_int_in(PG_FUNCTION_ARGS)
 {
-    char *str = PG_GETARG_CSTRING(0);
-    VersionedInt *result;
-    int value;
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED)),
+            errmsg("Conversion between text representation and versioned_int is not possible"));
 
-    if (sscanf(str, "%d", &value) != 1)
-    {
-        ereport(ERROR,
-                (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION)),
-                errmsg("invalid text representation for type %s: \"%s\"", "versioned_int", str));
-    }
+    // char *str = PG_GETARG_CSTRING(0);
+    // VersionedInt *result;
+    // int value;
 
-    result = (VersionedInt *)palloc(sizeof(VersionedInt) + sizeof(VersionedIntEntry));
-    SET_VARSIZE(result, sizeof(VersionedInt) + sizeof(VersionedIntEntry));
-    result->count = 1;
-    result->entries[0].value = value;
-    result->entries[0].time = GetCurrentTimestamp();
+    // if (sscanf(str, "%d", &value) != 1)
+    // {
+    //     ereport(ERROR,
+    //             (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION)),
+    //             errmsg("invalid text representation for type %s: \"%s\"", "versioned_int", str));
+    // }
 
-    PG_RETURN_POINTER(result);
+    // result = (VersionedInt *)palloc(sizeof(VersionedInt) + sizeof(VersionedIntEntry));
+    // SET_VARSIZE(result, sizeof(VersionedInt) + sizeof(VersionedIntEntry));
+    // result->count = 1;
+    // result->entries[0].value = value;
+    // result->entries[0].time = GetCurrentTimestamp();
+
+    // PG_RETURN_POINTER(result);
+}
+
+PG_FUNCTION_INFO_V1(make_versioned);
+Datum make_versioned(PG_FUNCTION_ARGS)
+{
 }
 
 /* versioned_int output function

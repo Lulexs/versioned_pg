@@ -2,4 +2,3 @@
 *.so
 *.bc
 .vscode/*
-copy.sh

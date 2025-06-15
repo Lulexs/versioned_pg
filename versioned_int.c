@@ -155,3 +155,57 @@ Datum versioned_int_out(PG_FUNCTION_ARGS)
     result = psprintf("%ld", versionedInt->entries[versionedInt->count - 1].value);
     PG_RETURN_CSTRING(result);
 }
+
+PG_FUNCTION_INFO_V1(versioned_int_eq_bigint);
+Datum versioned_int_eq_bigint(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    int64 bigInt = PG_GETARG_INT64(1);
+
+    PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value == bigInt);
+}
+
+PG_FUNCTION_INFO_V1(versioned_int_neq_bigint);
+Datum versioned_int_neq_bigint(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    int64 bigInt = PG_GETARG_INT64(1);
+
+    PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value != bigInt);
+}
+
+PG_FUNCTION_INFO_V1(versioned_int_gt_bigint);
+Datum versioned_int_gt_bigint(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    int64 bigInt = PG_GETARG_INT64(1);
+
+    PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value > bigInt);
+}
+
+PG_FUNCTION_INFO_V1(versioned_int_ge_bigint);
+Datum versioned_int_ge_bigint(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    int64 bigInt = PG_GETARG_INT64(1);
+
+    PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value >= bigInt);
+}
+
+PG_FUNCTION_INFO_V1(versioned_int_lt_bigint);
+Datum versioned_int_lt_bigint(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    int64 bigInt = PG_GETARG_INT64(1);
+
+    PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value < bigInt);
+}
+
+PG_FUNCTION_INFO_V1(versioned_int_le_bigint);
+Datum versioned_int_le_bigint(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    int64 bigInt = PG_GETARG_INT64(1);
+
+    PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value <= bigInt);
+}

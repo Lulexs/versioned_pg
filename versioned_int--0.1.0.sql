@@ -23,10 +23,15 @@ CREATE TYPE versioned_int (
     storage = plain
 );
 
-CREATE TYPE __int_history AS (updated_at TIMESTAMP, value BIGINT);
+CREATE TYPE __int_history AS (updated_at TIMESTAMPTZ, value BIGINT);
 
 CREATE FUNCTION get_history(versioned_int)
     RETURNS SETOF __int_history
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C STRICT VOLATILE;
+
+CREATE FUNCTION versioned_int_at_time(versioned_int, TIMESTAMPTZ)
+    RETURNS BIGINT
     AS 'MODULE_PATHNAME'
     LANGUAGE C STRICT VOLATILE;
 
@@ -59,6 +64,12 @@ CREATE FUNCTION versioned_int_le_bigint(versioned_int, BIGINT)
     RETURNS BOOLEAN
     AS 'MODULE_PATHNAME'
     LANGUAGE C IMMUTABLE STRICT;
+
+CREATE OPERATOR @ (
+    LEFTARG = versioned_int,
+    RIGHTARG = TIMESTAMPTZ,
+    PROCEDURE = versioned_int_at_time
+);
 
 CREATE OPERATOR = (
     LEFTARG = versioned_int,

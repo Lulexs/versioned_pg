@@ -146,6 +146,48 @@ Datum get_history(PG_FUNCTION_ARGS)
     SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(heaptuple));
 }
 
+PG_FUNCTION_INFO_V1(versioned_int_at_time);
+Datum versioned_int_at_time(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    VersionedIntEntry *entries = versionedInt->entries;
+    TimestampTz time_at = PG_GETARG_TIMESTAMPTZ(1);
+
+    int32 l = 0;
+    int32 r = versionedInt->count - 1;
+    int32 mid;
+
+    if (versionedInt->count == 0)
+    {
+        PG_RETURN_NULL();
+    }
+
+    while (l <= r)
+    {
+        mid = (l + r) / 2;
+
+        if (entries[mid].time == time_at)
+        {
+            PG_RETURN_INT64(entries[mid].value);
+        }
+        else if (entries[mid].time < time_at)
+        {
+            l = mid + 1;
+        }
+        else
+        {
+            r = mid - 1;
+        }
+    }
+
+    if (r >= 0)
+    {
+        PG_RETURN_INT64(entries[r].value);
+    }
+
+    PG_RETURN_NULL();
+}
+
 PG_FUNCTION_INFO_V1(versioned_int_out);
 Datum versioned_int_out(PG_FUNCTION_ARGS)
 {

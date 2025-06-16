@@ -76,6 +76,7 @@ Datum make_versioned(PG_FUNCTION_ARGS)
                         (errcode(ERRCODE_OUT_OF_MEMORY)),
                         errmsg("Extending column would push it pass the size of 512MB. Aborting"));
             }
+
             newVersionedInt = (VersionedInt *)palloc0(size);
             SET_VARSIZE(newVersionedInt, size);
             newVersionedInt->cap = 2 * versionedInt->cap;
@@ -97,6 +98,12 @@ Datum make_versioned(PG_FUNCTION_ARGS)
     PG_RETURN_POINTER(newVersionedInt);
 }
 
+typedef struct
+{
+    Datum values[2];
+    bool nulls[2];
+} NullsAndValues;
+
 PG_FUNCTION_INFO_V1(get_history);
 Datum get_history(PG_FUNCTION_ARGS)
 {
@@ -107,8 +114,7 @@ Datum get_history(PG_FUNCTION_ARGS)
     int call_cntr;
     int max_calls;
     int64 idx;
-    Datum *values;
-    bool *nulls;
+    NullsAndValues *state;
 
     if (SRF_IS_FIRSTCALL())
     {
@@ -124,8 +130,10 @@ Datum get_history(PG_FUNCTION_ARGS)
                     (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
                      errmsg("function returning composite called in a context that does not accept one")));
         }
-        tupdesc = BlessTupleDesc(tupdesc);
-        funcctx->tuple_desc = tupdesc;
+        funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+
+        state = (NullsAndValues *)palloc(sizeof(NullsAndValues));
+        funcctx->user_fctx = (void *)state;
 
         MemoryContextSwitchTo(oldContext);
     }
@@ -135,22 +143,19 @@ Datum get_history(PG_FUNCTION_ARGS)
     max_calls = funcctx->max_calls;
     tupdesc = funcctx->tuple_desc;
     idx = call_cntr;
+    state = (NullsAndValues *)funcctx->user_fctx;
 
-    if (call_cntr == max_calls)
+    if (call_cntr >= max_calls)
     {
         SRF_RETURN_DONE(funcctx);
     }
 
-    values = (Datum *)palloc(2 * sizeof(Datum));
-    nulls = (bool *)palloc(2 * sizeof(bool));
-    nulls[0] = false;
-    nulls[1] = false;
+    state->nulls[0] = false;
+    state->nulls[1] = false;
+    state->values[0] = TimestampTzGetDatum(versionedInt->entries[idx].time);
+    state->values[1] = Int64GetDatum(versionedInt->entries[idx].value);
 
-    values[0] = TimestampTzGetDatum(versionedInt->entries[idx].time);
-    values[1] = Int64GetDatum(versionedInt->entries[idx].value);
-
-    heaptuple = heap_form_tuple(tupdesc, values, nulls);
-
+    heaptuple = heap_form_tuple(tupdesc, state->values, state->nulls);
     SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(heaptuple));
 }
 
@@ -172,7 +177,7 @@ Datum versioned_int_at_time(PG_FUNCTION_ARGS)
 
     while (l <= r)
     {
-        mid = (l + r) / 2;
+        mid = l + (r - l) / 2;
 
         if (entries[mid].time == time_at)
         {

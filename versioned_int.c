@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define MAX_VERSIONED_INT_SIZE (512 * 1024 * 1024)
+
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
 #endif
@@ -43,7 +45,7 @@ Datum make_versioned(PG_FUNCTION_ARGS)
     TimestampTz time = GetCurrentTimestamp();
     if (!PG_ARGISNULL(0))
     {
-        versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+        versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     }
     if (PG_ARGISNULL(1))
     {
@@ -67,7 +69,13 @@ Datum make_versioned(PG_FUNCTION_ARGS)
     {
         if (versionedInt->count == versionedInt->cap)
         {
-            int32 size = sizeof(VersionedInt) + 2 * versionedInt->cap * sizeof(VersionedIntEntry);
+            Size size = sizeof(VersionedInt) + 2 * versionedInt->cap * sizeof(VersionedIntEntry);
+            if (size >= (Size)MAX_VERSIONED_INT_SIZE)
+            {
+                ereport(ERROR,
+                        (errcode(ERRCODE_OUT_OF_MEMORY)),
+                        errmsg("Extending column would push it pass the size of 512MB. Aborting"));
+            }
             newVersionedInt = (VersionedInt *)palloc0(size);
             SET_VARSIZE(newVersionedInt, size);
             newVersionedInt->cap = 2 * versionedInt->cap;
@@ -95,7 +103,7 @@ Datum get_history(PG_FUNCTION_ARGS)
     FuncCallContext *funcctx;
     TupleDesc tupdesc;
     HeapTuple heaptuple;
-    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     int call_cntr;
     int max_calls;
     int64 idx;
@@ -149,7 +157,7 @@ Datum get_history(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_at_time);
 Datum versioned_int_at_time(PG_FUNCTION_ARGS)
 {
-    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     VersionedIntEntry *entries = versionedInt->entries;
     TimestampTz time_at = PG_GETARG_TIMESTAMPTZ(1);
 
@@ -191,7 +199,7 @@ Datum versioned_int_at_time(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_out);
 Datum versioned_int_out(PG_FUNCTION_ARGS)
 {
-    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     char *result;
 
     result = psprintf("%ld", versionedInt->entries[versionedInt->count - 1].value);
@@ -201,7 +209,7 @@ Datum versioned_int_out(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_eq_bigint);
 Datum versioned_int_eq_bigint(PG_FUNCTION_ARGS)
 {
-    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     int64 bigInt = PG_GETARG_INT64(1);
 
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value == bigInt);
@@ -210,7 +218,7 @@ Datum versioned_int_eq_bigint(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_neq_bigint);
 Datum versioned_int_neq_bigint(PG_FUNCTION_ARGS)
 {
-    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     int64 bigInt = PG_GETARG_INT64(1);
 
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value != bigInt);
@@ -219,7 +227,7 @@ Datum versioned_int_neq_bigint(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_gt_bigint);
 Datum versioned_int_gt_bigint(PG_FUNCTION_ARGS)
 {
-    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     int64 bigInt = PG_GETARG_INT64(1);
 
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value > bigInt);
@@ -228,7 +236,7 @@ Datum versioned_int_gt_bigint(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_ge_bigint);
 Datum versioned_int_ge_bigint(PG_FUNCTION_ARGS)
 {
-    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     int64 bigInt = PG_GETARG_INT64(1);
 
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value >= bigInt);
@@ -237,7 +245,7 @@ Datum versioned_int_ge_bigint(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_lt_bigint);
 Datum versioned_int_lt_bigint(PG_FUNCTION_ARGS)
 {
-    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     int64 bigInt = PG_GETARG_INT64(1);
 
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value < bigInt);
@@ -246,7 +254,7 @@ Datum versioned_int_lt_bigint(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_le_bigint);
 Datum versioned_int_le_bigint(PG_FUNCTION_ARGS)
 {
-    VersionedInt *versionedInt = (VersionedInt *)PG_GETARG_POINTER(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     int64 bigInt = PG_GETARG_INT64(1);
 
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value <= bigInt);

@@ -19,8 +19,8 @@ CREATE TYPE versioned_int (
     internallength = VARIABLE,
     input = versioned_int_in,
     output = versioned_int_out,
-    alignment = int4,
-    storage = plain
+    alignment = double,
+    storage = extended
 );
 
 CREATE TYPE __int_history AS (updated_at TIMESTAMPTZ, value BIGINT);

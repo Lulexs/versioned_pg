@@ -39,6 +39,7 @@ Datum versioned_int_in(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(make_versioned);
 Datum make_versioned(PG_FUNCTION_ARGS)
 {
+    Size size;
     VersionedInt *versionedInt = NULL;
     VersionedInt *newVersionedInt = NULL;
     int64 newValue;
@@ -69,30 +70,26 @@ Datum make_versioned(PG_FUNCTION_ARGS)
     {
         if (versionedInt->count == versionedInt->cap)
         {
-            Size size = sizeof(VersionedInt) + 2 * versionedInt->cap * sizeof(VersionedIntEntry);
+            size = sizeof(VersionedInt) + 2 * versionedInt->cap * sizeof(VersionedIntEntry);
             if (size >= (Size)MAX_VERSIONED_INT_SIZE)
             {
                 ereport(ERROR,
                         (errcode(ERRCODE_OUT_OF_MEMORY)),
                         errmsg("Extending column would push it pass the size of 512MB. Aborting"));
             }
-
-            newVersionedInt = (VersionedInt *)palloc0(size);
-            SET_VARSIZE(newVersionedInt, size);
-            newVersionedInt->cap = 2 * versionedInt->cap;
-            newVersionedInt->count = versionedInt->count;
-            memcpy(newVersionedInt->entries, versionedInt->entries, versionedInt->count * sizeof(VersionedIntEntry));
-            newVersionedInt->entries[newVersionedInt->count].value = newValue;
-            newVersionedInt->entries[newVersionedInt->count].time = time;
-            newVersionedInt->count += 1;
         }
         else
         {
-            versionedInt->entries[versionedInt->count].value = newValue;
-            versionedInt->entries[versionedInt->count].time = time;
-            versionedInt->count += 1;
-            newVersionedInt = versionedInt;
+            size = sizeof(VersionedInt) + versionedInt->cap * sizeof(VersionedIntEntry);
         }
+        newVersionedInt = (VersionedInt *)palloc0(size);
+        SET_VARSIZE(newVersionedInt, size);
+        newVersionedInt->cap = 2 * versionedInt->cap;
+        newVersionedInt->count = versionedInt->count;
+        memcpy(newVersionedInt->entries, versionedInt->entries, versionedInt->count * sizeof(VersionedIntEntry));
+        newVersionedInt->entries[newVersionedInt->count].value = newValue;
+        newVersionedInt->entries[newVersionedInt->count].time = time;
+        newVersionedInt->count += 1;
     }
 
     PG_RETURN_POINTER(newVersionedInt);

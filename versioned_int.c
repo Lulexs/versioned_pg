@@ -156,31 +156,28 @@ Datum get_history(PG_FUNCTION_ARGS)
     SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(heaptuple));
 }
 
-PG_FUNCTION_INFO_V1(versioned_int_at_time);
-Datum versioned_int_at_time(PG_FUNCTION_ARGS)
+VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp);
+VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp)
 {
-    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     VersionedIntEntry *entries = versionedInt->entries;
-    TimestampTz time_at = PG_GETARG_TIMESTAMPTZ(1);
-
     int32 l = 0;
     int32 r = versionedInt->count - 1;
     int32 mid;
 
     if (versionedInt->count == 0)
     {
-        PG_RETURN_NULL();
+        return NULL;
     }
 
     while (l <= r)
     {
         mid = l + (r - l) / 2;
 
-        if (entries[mid].time == time_at)
+        if (entries[mid].time == timestamp)
         {
-            PG_RETURN_INT64(entries[mid].value);
+            return &entries[mid];
         }
-        else if (entries[mid].time < time_at)
+        else if (entries[mid].time < timestamp)
         {
             l = mid + 1;
         }
@@ -192,10 +189,60 @@ Datum versioned_int_at_time(PG_FUNCTION_ARGS)
 
     if (r >= 0)
     {
-        PG_RETURN_INT64(entries[r].value);
+        return &entries[r];
     }
 
-    PG_RETURN_NULL();
+    return NULL;
+}
+
+PG_FUNCTION_INFO_V1(versioned_int_at_time);
+Datum versioned_int_at_time(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+    TimestampTz time_at = PG_GETARG_TIMESTAMPTZ(1);
+
+    VersionedIntEntry *entry = get_versioned_ints_value_at_time(versionedInt, time_at);
+    if (entry == NULL)
+    {
+        PG_RETURN_NULL();
+    }
+
+    PG_RETURN_INT64(entry->value);
+}
+
+PG_FUNCTION_INFO_V1(versioned_int_at_time_eq);
+Datum versioned_int_at_time_eq(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+    HeapTupleHeader t = PG_GETARG_HEAPTUPLEHEADER(1);
+    bool isNull;
+    Datum timestampDatum, valueDatum;
+    int64 value;
+    TimestampTz timestamp;
+    VersionedIntEntry *entry;
+
+    timestampDatum = GetAttributeByName(t, "ts", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR, (errmsg("ts cannot be NULL")));
+    }
+
+    valueDatum = GetAttributeByName(t, "value", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR, (errmsg("ts cannot be NULL")));
+    }
+
+    value = DatumGetInt64(valueDatum);
+    timestamp = DatumGetTimestampTz(timestampDatum);
+
+    entry = get_versioned_ints_value_at_time(versionedInt, timestamp);
+    if (entry == NULL)
+    {
+        PG_RETURN_NULL();
+    }
+
+    PG_RETURN_BOOL(entry->value == value);
 }
 
 PG_FUNCTION_INFO_V1(versioned_int_out);

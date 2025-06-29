@@ -23,6 +23,11 @@ CREATE TYPE versioned_int (
     storage = extended
 );
 
+CREATE TYPE ts_int AS (
+    ts TIMESTAMPTZ,
+    value BIGINT
+);
+
 CREATE TYPE __int_history AS (updated_at TIMESTAMPTZ, value BIGINT);
 
 CREATE FUNCTION get_history(versioned_int)
@@ -33,7 +38,12 @@ CREATE FUNCTION get_history(versioned_int)
 CREATE FUNCTION versioned_int_at_time(versioned_int, TIMESTAMPTZ)
     RETURNS BIGINT
     AS 'MODULE_PATHNAME'
-    LANGUAGE C STRICT VOLATILE;
+    LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_at_time_eq(versioned_int, ts_int)
+    RETURNS BOOLEAN
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C STRICT IMMUTABLE;
 
 CREATE FUNCTION versioned_int_eq_bigint(versioned_int, BIGINT)
     RETURNS BOOLEAN
@@ -69,6 +79,14 @@ CREATE OPERATOR @ (
     LEFTARG = versioned_int,
     RIGHTARG = TIMESTAMPTZ,
     PROCEDURE = versioned_int_at_time
+);
+
+CREATE OPERATOR @= (
+    LEFTARG = versioned_int,
+    RIGHTARG = ts_int,
+    PROCEDURE = versioned_int_at_time_eq,
+    RESTRICT = eqsel,
+    JOIN = eqjoinsel
 );
 
 CREATE OPERATOR = (

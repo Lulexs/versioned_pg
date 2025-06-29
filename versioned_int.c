@@ -255,6 +255,12 @@ Datum versioned_int_out(PG_FUNCTION_ARGS)
     PG_RETURN_CSTRING(result);
 }
 
+/*
+ *
+ * COMPARISON OPERATORS FOR versioned_int and bigint
+ *
+ */
+/* versioned_int = bigint */
 PG_FUNCTION_INFO_V1(versioned_int_eq_bigint);
 Datum versioned_int_eq_bigint(PG_FUNCTION_ARGS)
 {
@@ -264,6 +270,7 @@ Datum versioned_int_eq_bigint(PG_FUNCTION_ARGS)
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value == bigInt);
 }
 
+/* versioned_int <> bigint */
 PG_FUNCTION_INFO_V1(versioned_int_neq_bigint);
 Datum versioned_int_neq_bigint(PG_FUNCTION_ARGS)
 {
@@ -273,6 +280,7 @@ Datum versioned_int_neq_bigint(PG_FUNCTION_ARGS)
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value != bigInt);
 }
 
+/* versioned_int > bigint */
 PG_FUNCTION_INFO_V1(versioned_int_gt_bigint);
 Datum versioned_int_gt_bigint(PG_FUNCTION_ARGS)
 {
@@ -282,6 +290,7 @@ Datum versioned_int_gt_bigint(PG_FUNCTION_ARGS)
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value > bigInt);
 }
 
+/* versioned_int >= bigint */
 PG_FUNCTION_INFO_V1(versioned_int_ge_bigint);
 Datum versioned_int_ge_bigint(PG_FUNCTION_ARGS)
 {
@@ -291,6 +300,7 @@ Datum versioned_int_ge_bigint(PG_FUNCTION_ARGS)
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value >= bigInt);
 }
 
+/* versioned_int < bigint */
 PG_FUNCTION_INFO_V1(versioned_int_lt_bigint);
 Datum versioned_int_lt_bigint(PG_FUNCTION_ARGS)
 {
@@ -300,6 +310,7 @@ Datum versioned_int_lt_bigint(PG_FUNCTION_ARGS)
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value < bigInt);
 }
 
+/* versioned_int <= bigint */
 PG_FUNCTION_INFO_V1(versioned_int_le_bigint);
 Datum versioned_int_le_bigint(PG_FUNCTION_ARGS)
 {

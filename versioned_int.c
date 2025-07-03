@@ -398,6 +398,13 @@ Datum versioned_int_le_bigint(PG_FUNCTION_ARGS)
  *
  */
 
+/*
+ *
+ * This struct represents internal node of Gist index. It is essentially
+ * bounding box (rectangle) whose dimensions are time and value
+ *
+ */
+
 typedef struct
 {
     TimestampTz lower_tzbound;
@@ -406,18 +413,23 @@ typedef struct
     int64 upper_val;
 } verint_rect;
 
+/*
+ *
+ * versioned_int's consistency function
+ *
+ */
 PG_FUNCTION_INFO_V1(versioned_int_consistent);
 Datum versioned_int_consistent(PG_FUNCTION_ARGS)
 {
     verint_rect *non_leaf_key;
-    VersionedInt *leaf_key;
-    bool isNull, retval, match;
+    VersionedIntEntry *leaf_entry;
+    bool isNull, match;
     Datum valueDatum, time_at_datum;
     int64 value;
     TimestampTz time_at;
     GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
     HeapTupleHeader t = PG_GETARG_HEAPTUPLEHEADER(1);
-    StrategyNumber strategy = (StrategyNumber)PG_GETARG_UINT16(2);
+    // StrategyNumber strategy = (StrategyNumber)PG_GETARG_UINT16(2); Currently only supported strategy is @=
     bool *recheck = (bool *)PG_GETARG_POINTER(4);
 
     time_at_datum = GetAttributeByName(t, "ts", &isNull);
@@ -436,7 +448,9 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
 
     if (GIST_LEAF(entry))
     {
-        match = 
+        leaf_entry = (VersionedIntEntry *)entry->key;
+
+        match = (leaf_entry->time == time_at && leaf_entry->value == value);
     }
     else
     {
@@ -444,10 +458,9 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
         match = non_leaf_key->lower_tzbound <= time_at &&
                 time_at <= non_leaf_key->upper_tzbound &&
                 non_leaf_key->lower_val <= value &&
-                value <= non_leaf_key->upper_val
+                value <= non_leaf_key->upper_val;
     }
 
     *recheck = false;
-
-    PG_RETURN_BOOL(retval);
+    PG_RETURN_BOOL(match);
 }

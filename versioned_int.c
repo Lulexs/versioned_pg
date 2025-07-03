@@ -3,6 +3,8 @@
 #include "datatype/timestamp.h"
 #include "utils/timestamp.h"
 #include "funcapi.h"
+#include "access/gist.h"
+#include "access/heapam.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,12 +15,28 @@
 PG_MODULE_MAGIC;
 #endif
 
+/*
+ *
+ * Struct that holds single entry in versioned_int type.
+ * value is value at specified timestamp time
+ *
+ */
 typedef struct
 {
     int64 value;
-    Timestamp time;
+    TimestampTz time;
 } VersionedIntEntry;
 
+/*
+ *
+ * Struct that is versioned_int's internal representation.
+ * v1_len_ is mandatory field for varlena types that holds total length in bytes
+ * count is number of entries in entries array
+ * cap is current capacity of entries array
+ * pad_ is padding added for aligning entries array
+ * entries is an array that holds integer's history
+ *
+ */
 typedef struct
 {
     int32 v1_len_;
@@ -28,6 +46,13 @@ typedef struct
     VersionedIntEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } VersionedInt;
 
+/*
+ *
+ * Input function for versioned_int, i.e. function that turns
+ * string to type's internal representation. For versioned_int
+ * this conversion is disabled.
+ *
+ */
 PG_FUNCTION_INFO_V1(versioned_int_in);
 Datum versioned_int_in(PG_FUNCTION_ARGS)
 {
@@ -36,6 +61,15 @@ Datum versioned_int_in(PG_FUNCTION_ARGS)
             errmsg("Conversion between text representation and versioned_int is not possible"));
 }
 
+/*
+ *
+ * make_versioned is a function that takes two arguments - versioned_int
+ * and new value of that versioned int and adds new value to int's history.
+ * can be called like
+ * make_versioned(null, new_value) or
+ * make_versioned(verint, new_value)
+ *
+ */
 PG_FUNCTION_INFO_V1(make_versioned);
 Datum make_versioned(PG_FUNCTION_ARGS)
 {
@@ -95,12 +129,24 @@ Datum make_versioned(PG_FUNCTION_ARGS)
     PG_RETURN_POINTER(newVersionedInt);
 }
 
+/*
+ *
+ * Helper struct that holds values array and nulls array required
+ * for specifying return in srfs.
+ *
+ */
 typedef struct
 {
     Datum values[2];
     bool nulls[2];
 } NullsAndValues;
 
+/*
+ *
+ * Function that returns versioned_int's history in format
+ * timetsamptz, int64
+ *
+ */
 PG_FUNCTION_INFO_V1(get_history);
 Datum get_history(PG_FUNCTION_ARGS)
 {
@@ -156,6 +202,13 @@ Datum get_history(PG_FUNCTION_ARGS)
     SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(heaptuple));
 }
 
+/*
+ *
+ * Helper function that given versioned_int and timestamp returns
+ * versioned_ints value at that time or null if it didn't exist at
+ * said time
+ *
+ */
 VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp);
 VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp)
 {
@@ -195,6 +248,12 @@ VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, 
     return NULL;
 }
 
+/*
+ *
+ * Function that is used for getting versioned_int's value at timestamp, i.e
+ * when user uses @ operator (versioned_int @ timestamp)
+ *
+ */
 PG_FUNCTION_INFO_V1(versioned_int_at_time);
 Datum versioned_int_at_time(PG_FUNCTION_ARGS)
 {
@@ -210,6 +269,12 @@ Datum versioned_int_at_time(PG_FUNCTION_ARGS)
     PG_RETURN_INT64(entry->value);
 }
 
+/*
+ *
+ * Function that is used for comparing versioned_int with composite (timestamp, value).
+ * In sql that would look like versioned_int @= (timestamp, value).
+ *
+ */
 PG_FUNCTION_INFO_V1(versioned_int_at_time_eq);
 Datum versioned_int_at_time_eq(PG_FUNCTION_ARGS)
 {
@@ -245,6 +310,13 @@ Datum versioned_int_at_time_eq(PG_FUNCTION_ARGS)
     PG_RETURN_BOOL(entry->value == value);
 }
 
+/*
+ *
+ * Output function for versioned_int, i.e. function that turns
+ * type's internal representation to string. Here we just get
+ * versioned_int's current value.
+ *
+ */
 PG_FUNCTION_INFO_V1(versioned_int_out);
 Datum versioned_int_out(PG_FUNCTION_ARGS)
 {
@@ -318,4 +390,64 @@ Datum versioned_int_le_bigint(PG_FUNCTION_ARGS)
     int64 bigInt = PG_GETARG_INT64(1);
 
     PG_RETURN_BOOL(versionedInt->entries[versionedInt->count - 1].value <= bigInt);
+}
+
+/*
+ *
+ * GIST INDEX METHOD SUPPORT FOR VERSIONED_INT
+ *
+ */
+
+typedef struct
+{
+    TimestampTz lower_tzbound;
+    TimestampTz upper_tzbound;
+    int64 lower_val;
+    int64 upper_val;
+} verint_rect;
+
+PG_FUNCTION_INFO_V1(versioned_int_consistent);
+Datum versioned_int_consistent(PG_FUNCTION_ARGS)
+{
+    verint_rect *non_leaf_key;
+    VersionedInt *leaf_key;
+    bool isNull, retval, match;
+    Datum valueDatum, time_at_datum;
+    int64 value;
+    TimestampTz time_at;
+    GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
+    HeapTupleHeader t = PG_GETARG_HEAPTUPLEHEADER(1);
+    StrategyNumber strategy = (StrategyNumber)PG_GETARG_UINT16(2);
+    bool *recheck = (bool *)PG_GETARG_POINTER(4);
+
+    time_at_datum = GetAttributeByName(t, "ts", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR, (errmsg("ts cannot be NULL")));
+    }
+    valueDatum = GetAttributeByName(t, "value", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR, (errmsg("ts cannot be NULL")));
+    }
+
+    value = DatumGetInt64(valueDatum);
+    time_at = DatumGetTimestampTz(time_at_datum);
+
+    if (GIST_LEAF(entry))
+    {
+        match = 
+    }
+    else
+    {
+        non_leaf_key = (verint_rect *)entry->key;
+        match = non_leaf_key->lower_tzbound <= time_at &&
+                time_at <= non_leaf_key->upper_tzbound &&
+                non_leaf_key->lower_val <= value &&
+                value <= non_leaf_key->upper_val
+    }
+
+    *recheck = false;
+
+    PG_RETURN_BOOL(retval);
 }

@@ -466,3 +466,55 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
     *recheck = false;
     PG_RETURN_BOOL(false);
 }
+
+/*
+ *
+ * versioned_int's union function
+ *
+ */
+PG_FUNCTION_INFO_V1(versioned_int_union);
+Datum versioned_int_union(PG_FUNCTION_ARGS)
+{
+    int i;
+    verint_rect *nodeentry;
+    GistEntryVector *entryvec = (GistEntryVector *)PG_GETARG_POINTER(0);
+    GISTENTRY *ent = entryvec->vector;
+    int n = entryvec->n;
+    verint_rect *ret = (verint_rect *)palloc0(sizeof(verint_rect));
+
+    ret->lower_tzbound = PG_INT64_MAX;
+    ret->upper_tzbound = PG_INT64_MIN;
+    ret->lower_val = PG_INT64_MAX;
+    ret->upper_val = PG_INT64_MIN;
+
+    for (i = 0; i < n; i++)
+    {
+        nodeentry = (verint_rect *)DatumGetPointer(ent[i].key);
+        ret->lower_tzbound = Min(ret->lower_tzbound, nodeentry->lower_tzbound);
+        ret->upper_tzbound = Max(ret->upper_tzbound, nodeentry->upper_tzbound);
+        ret->lower_val = Min(ret->lower_val, nodeentry->lower_val);
+        ret->upper_val = Max(ret->upper_val, nodeentry->upper_val);
+    }
+
+    PG_RETURN_POINTER(ret);
+}
+
+/*
+ *
+ * versioned_int's compress function
+ *
+ */
+PG_FUNCTION_INFO_V1(versioned_int_compress);
+Datum versioned_int_compress(PG_FUNCTION_ARGS)
+{
+}
+
+/*
+ *
+ * versioned_int's decompress function
+ *
+ */
+PG_FUNCTION_INFO_V1(versioned_int_decompress);
+Datum versioned_int_decompress(PG_FUNCTION_ARGS)
+{
+}

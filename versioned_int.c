@@ -35,6 +35,7 @@ typedef struct
  * cap is current capacity of entries array
  * pad_ is padding added for aligning entries array
  * entries is an array that holds integer's history
+ * min_val and max_val are fields used to speed inserting entry in gist index
  *
  */
 typedef struct
@@ -43,6 +44,8 @@ typedef struct
     int32 count;
     int32 cap;
     int32 pad_;
+    int64 min_val;
+    int64 max_val;
     VersionedIntEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } VersionedInt;
 
@@ -98,6 +101,8 @@ Datum make_versioned(PG_FUNCTION_ARGS)
         versionedInt->count = 1;
         versionedInt->entries[0].value = newValue;
         versionedInt->entries[0].time = time;
+        versionedInt->min_val = newValue;
+        versionedInt->max_val = newValue;
         newVersionedInt = versionedInt;
     }
     else
@@ -123,6 +128,8 @@ Datum make_versioned(PG_FUNCTION_ARGS)
         memcpy(newVersionedInt->entries, versionedInt->entries, versionedInt->count * sizeof(VersionedIntEntry));
         newVersionedInt->entries[newVersionedInt->count].value = newValue;
         newVersionedInt->entries[newVersionedInt->count].time = time;
+        newVersionedInt->min_val = Min(versionedInt->min_val, newValue);
+        newVersionedInt->max_val = Max(versionedInt->max_val, newValue);
         newVersionedInt->count += 1;
     }
 
@@ -507,14 +514,28 @@ Datum versioned_int_union(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_compress);
 Datum versioned_int_compress(PG_FUNCTION_ARGS)
 {
-}
+    GISTENTRY *retval;
+    verint_rect *rect;
+    VersionedInt *verint;
+    GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
 
-/*
- *
- * versioned_int's decompress function
- *
- */
-PG_FUNCTION_INFO_V1(versioned_int_decompress);
-Datum versioned_int_decompress(PG_FUNCTION_ARGS)
-{
+    if (entry->leafkey)
+    {
+        rect = (verint_rect *)palloc(sizeof(verint_rect));
+
+        verint = (VersionedInt *)PG_DETOAST_DATUM(DatumGetPointer(entry->key));
+        rect->lower_tzbound = verint->entries[0].time;
+        rect->upper_tzbound = verint->entries[verint->count - 1].time;
+        rect->lower_val = verint->min_val;
+        rect->upper_val = verint->max_val;
+
+        retval = palloc(sizeof(GISTENTRY));
+        gistentryinit(*retval, PointerGetDatum(rect), entry->rel, entry->page, entry->offset, false);
+    }
+    else
+    {
+        retval = entry;
+    }
+
+    PG_RETURN_POINTER(retval);
 }

@@ -400,7 +400,7 @@ Datum versioned_int_le_bigint(PG_FUNCTION_ARGS)
 
 /*
  *
- * This struct represents internal node of Gist index. It is essentially
+ * This struct represents node of Gist index. It is essentially
  * bounding box (rectangle) whose dimensions are time and value
  *
  */
@@ -421,9 +421,8 @@ typedef struct
 PG_FUNCTION_INFO_V1(versioned_int_consistent);
 Datum versioned_int_consistent(PG_FUNCTION_ARGS)
 {
-    verint_rect *non_leaf_key;
-    VersionedIntEntry *leaf_entry;
-    bool isNull, match;
+    verint_rect *key;
+    bool isNull;
     Datum valueDatum, time_at_datum;
     int64 value;
     TimestampTz time_at;
@@ -440,27 +439,30 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
     valueDatum = GetAttributeByName(t, "value", &isNull);
     if (isNull)
     {
-        ereport(ERROR, (errmsg("ts cannot be NULL")));
+        ereport(ERROR, (errmsg("value cannot be NULL")));
     }
 
     value = DatumGetInt64(valueDatum);
     time_at = DatumGetTimestampTz(time_at_datum);
 
-    if (GIST_LEAF(entry))
-    {
-        leaf_entry = (VersionedIntEntry *)entry->key;
+    key = (verint_rect *)DatumGetPointer(entry->key);
 
-        match = (leaf_entry->time == time_at && leaf_entry->value == value);
-    }
-    else
+    if (key->lower_tzbound <= time_at &&
+        time_at <= key->upper_tzbound &&
+        key->lower_val <= value &&
+        value <= key->upper_val)
     {
-        non_leaf_key = (verint_rect *)entry->key;
-        match = non_leaf_key->lower_tzbound <= time_at &&
-                time_at <= non_leaf_key->upper_tzbound &&
-                non_leaf_key->lower_val <= value &&
-                value <= non_leaf_key->upper_val;
+        if (GIST_LEAF(entry))
+        {
+            *recheck = true;
+            PG_RETURN_BOOL(true);
+        }
+        else
+        {
+            *recheck = false;
+            PG_RETURN_BOOL(true);
+        }
     }
-
     *recheck = false;
-    PG_RETURN_BOOL(match);
+    PG_RETURN_BOOL(false);
 }

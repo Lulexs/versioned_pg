@@ -422,7 +422,7 @@ typedef struct
 
 /*
  *
- * versioned_int's consistency function
+ * versioned_int's gist consistency function
  *
  */
 PG_FUNCTION_INFO_V1(versioned_int_consistent);
@@ -476,7 +476,7 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
 
 /*
  *
- * versioned_int's union function
+ * versioned_int's gist union function
  *
  */
 PG_FUNCTION_INFO_V1(versioned_int_union);
@@ -508,7 +508,7 @@ Datum versioned_int_union(PG_FUNCTION_ARGS)
 
 /*
  *
- * versioned_int's compress function
+ * versioned_int's gist compress function
  *
  */
 PG_FUNCTION_INFO_V1(versioned_int_compress);
@@ -538,4 +538,36 @@ Datum versioned_int_compress(PG_FUNCTION_ARGS)
     }
 
     PG_RETURN_POINTER(retval);
+}
+
+/*
+ *
+ * versioned_int's gist penalty function
+ *
+ */
+PG_FUNCTION_INFO_V1(versioned_int_penalty);
+Datum versioned_int_penalty(PG_FUNCTION_ARGS)
+{
+    GISTENTRY *origentry = (GISTENTRY *)PG_GETARG_POINTER(0);
+    GISTENTRY *newentry = (GISTENTRY *)PG_GETARG_POINTER(1);
+    float *penalty = (float *)PG_GETARG_POINTER(2);
+    verint_rect *origrect = (verint_rect *)DatumGetPointer(origentry->key);
+    verint_rect *newrect = (verint_rect *)DatumGetPointer(newentry->key);
+
+    float8 extra = 0;
+
+    if (newrect->lower_tzbound < origrect->lower_tzbound)
+        extra += (float8)(origrect->lower_tzbound - newrect->lower_tzbound);
+
+    if (newrect->upper_tzbound > origrect->upper_tzbound)
+        extra += (float8)(newrect->upper_tzbound - origrect->upper_tzbound);
+
+    if (newrect->lower_val < origrect->lower_val)
+        extra += (float8)(origrect->lower_val - newrect->lower_val);
+
+    if (newrect->upper_val > origrect->upper_val)
+        extra += (float8)(newrect->upper_val - origrect->upper_val);
+
+    *penalty = (float)extra;
+    PG_RETURN_POINTER(penalty);
 }

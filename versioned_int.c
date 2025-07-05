@@ -571,3 +571,26 @@ Datum versioned_int_penalty(PG_FUNCTION_ARGS)
     *penalty = (float)extra;
     PG_RETURN_POINTER(penalty);
 }
+
+/*
+ *
+ * versioned_int's gist same function
+ *
+ */
+PG_FUNCTION_INFO_V1(versioned_int_same);
+Datum versioned_int_same(PG_FUNCTION_ARGS)
+{
+    verint_rect *r1 = (verint_rect *)PG_GETARG_POINTER(0);
+    verint_rect *r2 = (verint_rect *)PG_GETARG_POINTER(1);
+    bool *result = (bool *)PG_GETARG_POINTER(2);
+
+    *result = (r1->lower_tzbound == r2->lower_tzbound) &&
+              (r1->upper_tzbound == r2->upper_tzbound) &&
+              (r1->lower_val == r2->lower_val) &&
+              (r1->upper_val == r2->upper_val);
+
+    // fancy
+    // *result = (memcmp(r1, r2, sizeof(verint_rect)) == 0)
+
+    PG_RETURN_POINTER(result);
+}

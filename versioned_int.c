@@ -705,4 +705,4 @@ Datum versioned_int_picksplit(PG_FUNCTION_ARGS)
     v->spl_rdatum = PointerGetDatum(unionR);
 
     PG_RETURN_POINTER(v);
-}
+} 

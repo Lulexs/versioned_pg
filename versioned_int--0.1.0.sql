@@ -148,3 +148,46 @@ CREATE OPERATOR <= (
     RESTRICT = scalarlesel,
     JOIN = scalarlejoinsel
 );
+
+CREATE OR REPLACE FUNCTION versioned_int_consistent(internal, versioned_int, smallint, oid, internal)
+RETURNS bool
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+CREATE TYPE verint_rect;
+
+CREATE OR REPLACE FUNCTION versioned_int_union(internal, internal)
+RETURNS verint_rect
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION versioned_int_compress(internal)
+RETURNS internal
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT:
+
+CREATE OR REPLACE FUNCTION versioned_int_penalty(internal, internal, internal)
+RETURNS internal
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION versioned_int_same(verint_rect, verint_rect, internal)
+RETURNS internal
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+CREATE OR REPLACE FUNCTION versioned_int_picksplit(internal, internal)
+RETURNS internal
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+CREATE OPERATOR CLASS gist_versioned_int_ops
+    DEFAULT FOR TYPE versioned_int USING gist AS
+        OPERATOR        1           @=,
+        FUNCTION        1           versioned_int_consistent,
+        FUNCTION        2           versioned_int_union,
+        FUNCTION        3           versioned_int_compress,
+        FUNCTION        5           versioned_int_penalty,
+        FUNCTION        6           versioned_int_picksplit,
+        FUNCTION        7           versioned_int_same
+        STORAGE verint_rect;

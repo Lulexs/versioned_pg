@@ -434,7 +434,8 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
     int64 value;
     TimestampTz time_at;
     GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
-    HeapTupleHeader t = PG_GETARG_HEAPTUPLEHEADER(1);
+    Datum query_datum = PG_GETARG_DATUM(1);
+    HeapTupleHeader t = DatumGetHeapTupleHeader(query_datum);
     // StrategyNumber strategy = (StrategyNumber)PG_GETARG_UINT16(2); Currently only supported strategy is @=
     bool *recheck = (bool *)PG_GETARG_POINTER(4);
 
@@ -454,6 +455,10 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
 
     key = (verint_rect *)DatumGetPointer(entry->key);
 
+    elog(NOTICE, "Consistent: checking timestamp=%ld, value=%ld against bounds [%ld-%ld, %ld-%ld]",
+         time_at, value,
+         key->lower_tzbound, key->upper_tzbound,
+         key->lower_val, key->upper_val);
     if (key->lower_tzbound <= time_at &&
         time_at <= key->upper_tzbound &&
         key->lower_val <= value &&
@@ -522,12 +527,29 @@ Datum versioned_int_compress(PG_FUNCTION_ARGS)
     if (entry->leafkey)
     {
         rect = (verint_rect *)palloc(sizeof(verint_rect));
-
         verint = (VersionedInt *)PG_DETOAST_DATUM(DatumGetPointer(entry->key));
+
+        // DEBUG: Check if verint is valid
+        elog(NOTICE, "Compress: count=%d, min_val=%ld, max_val=%ld",
+             verint->count, verint->min_val, verint->max_val);
+
+        if (verint->count > 0)
+        {
+            elog(NOTICE, "Compress: first_entry time=%ld, value=%ld",
+                 verint->entries[0].time, verint->entries[0].value);
+            elog(NOTICE, "Compress: last_entry time=%ld, value=%ld",
+                 verint->entries[verint->count - 1].time, verint->entries[verint->count - 1].value);
+        }
+
         rect->lower_tzbound = verint->entries[0].time;
         rect->upper_tzbound = verint->entries[verint->count - 1].time;
         rect->lower_val = verint->min_val;
         rect->upper_val = verint->max_val;
+
+        // DEBUG: Check the resulting bounds
+        elog(NOTICE, "Compress: final bounds [%ld-%ld, %ld-%ld]",
+             rect->lower_tzbound, rect->upper_tzbound,
+             rect->lower_val, rect->upper_val);
 
         retval = palloc(sizeof(GISTENTRY));
         gistentryinit(*retval, PointerGetDatum(rect), entry->rel, entry->page, entry->offset, false);
@@ -705,4 +727,4 @@ Datum versioned_int_picksplit(PG_FUNCTION_ARGS)
     v->spl_rdatum = PointerGetDatum(unionR);
 
     PG_RETURN_POINTER(v);
-} 
+}

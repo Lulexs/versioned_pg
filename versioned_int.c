@@ -594,3 +594,115 @@ Datum versioned_int_same(PG_FUNCTION_ARGS)
 
     PG_RETURN_POINTER(result);
 }
+
+/*
+ *
+ * versioned_int's gist picksplit function
+ *
+ */
+static inline float8 get_area(const verint_rect *r)
+{
+    return (float8)(r->upper_tzbound - r->lower_tzbound) *
+           (float8)(r->upper_val - r->lower_val);
+}
+
+static inline float8 get_union_area(const verint_rect *r1, const verint_rect *r2)
+{
+    TimestampTz lo_t = Min(r1->lower_tzbound, r2->lower_tzbound);
+    TimestampTz hi_t = Max(r1->upper_tzbound, r2->upper_tzbound);
+    int64 lo_v = Min(r1->lower_val, r2->lower_val);
+    int64 hi_v = Max(r1->upper_val, r2->upper_val);
+
+    return (float8)(hi_t - lo_t) * (float8)(hi_v - lo_v);
+}
+
+static inline void get_union_rect(const verint_rect *r1, const verint_rect *r2, verint_rect *dst)
+{
+    dst->lower_tzbound = Min(r1->lower_tzbound, r2->lower_tzbound);
+    dst->upper_tzbound = Max(r1->upper_tzbound, r2->upper_tzbound);
+    dst->lower_val = Min(r1->lower_val, r2->lower_val);
+    dst->upper_val = Max(r1->upper_val, r2->upper_val);
+}
+
+PG_FUNCTION_INFO_V1(versioned_int_picksplit);
+Datum versioned_int_picksplit(PG_FUNCTION_ARGS)
+{
+    GistEntryVector *entryvec = (GistEntryVector *)PG_GETARG_POINTER(0);
+    GIST_SPLITVEC *v = (GIST_SPLITVEC *)PG_GETARG_POINTER(1);
+
+    OffsetNumber maxoff = entryvec->n - 1;
+    OffsetNumber i, j;
+    int nbytes;
+    verint_rect *unionL, *unionR, *r, tmpL, tmpR;
+    float8 enlargementL, enlargementR;
+
+    int seed1 = -1, seed2 = -1;
+    float8 worst_waste = -1;
+
+    for (i = FirstOffsetNumber; i < maxoff; i = OffsetNumberNext(i))
+    {
+        verint_rect *r1 = (verint_rect *)DatumGetPointer(entryvec->vector[i].key);
+        for (j = OffsetNumberNext(i); j <= maxoff; j = OffsetNumberNext(j))
+        {
+            verint_rect *r2 = (verint_rect *)DatumGetPointer(entryvec->vector[j].key);
+
+            float8 area1 = get_area(r1);
+            float8 area2 = get_area(r2);
+            float8 union_area = get_union_area(r1, r2);
+            float8 waste = union_area - area1 - area2;
+
+            if (waste > worst_waste)
+            {
+                worst_waste = waste;
+                seed1 = i;
+                seed2 = j;
+            }
+        }
+    }
+
+    nbytes = (maxoff + 1) * sizeof(OffsetNumber);
+    v->spl_left = (OffsetNumber *)palloc(nbytes);
+    v->spl_right = (OffsetNumber *)palloc(nbytes);
+    v->spl_nleft = v->spl_nright = 0;
+
+    unionL = (verint_rect *)palloc(sizeof(verint_rect));
+    unionR = (verint_rect *)palloc(sizeof(verint_rect));
+    *unionL = *(verint_rect *)DatumGetPointer(entryvec->vector[seed1].key);
+    *unionR = *(verint_rect *)DatumGetPointer(entryvec->vector[seed2].key);
+
+    v->spl_left[v->spl_nleft++] = seed1;
+    v->spl_right[v->spl_nright++] = seed2;
+
+    for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
+    {
+        if (i == seed1 || i == seed2)
+            continue;
+
+        r = (verint_rect *)DatumGetPointer(entryvec->vector[i].key);
+
+        tmpL = *unionL;
+        tmpR = *unionR;
+        get_union_rect(unionL, r, &tmpL);
+        get_union_rect(unionR, r, &tmpR);
+
+        enlargementL = get_area(&tmpL) - get_area(unionL);
+        enlargementR = get_area(&tmpR) - get_area(unionR);
+
+        if (enlargementL < enlargementR ||
+            (enlargementL == enlargementR && get_area(unionL) < get_area(unionR)))
+        {
+            v->spl_left[v->spl_nleft++] = i;
+            *unionL = tmpL;
+        }
+        else
+        {
+            v->spl_right[v->spl_nright++] = i;
+            *unionR = tmpR;
+        }
+    }
+
+    v->spl_ldatum = PointerGetDatum(unionL);
+    v->spl_rdatum = PointerGetDatum(unionR);
+
+    PG_RETURN_POINTER(v);
+}

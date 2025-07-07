@@ -466,6 +466,77 @@ Datum bigint_le_versioned_int(PG_FUNCTION_ARGS)
 
 /*
  *
+ * COMPARISON OPERATORS FOR verint and verint
+ *
+ */
+/* verint = verint */
+PG_FUNCTION_INFO_V1(versioned_int_eq_versioned_int);
+Datum versioned_int_eq_versioned_int(PG_FUNCTION_ARGS)
+{
+    VersionedInt *a = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+    VersionedInt *b = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(a->entries[a->count - 1].value ==
+                   b->entries[b->count - 1].value);
+}
+
+/* verint <> verint */
+PG_FUNCTION_INFO_V1(versioned_int_neq_versioned_int);
+Datum versioned_int_neq_versioned_int(PG_FUNCTION_ARGS)
+{
+    VersionedInt *a = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+    VersionedInt *b = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(a->entries[a->count - 1].value !=
+                   b->entries[b->count - 1].value);
+}
+
+/* verint > verint */
+PG_FUNCTION_INFO_V1(versioned_int_gt_versioned_int);
+Datum versioned_int_gt_versioned_int(PG_FUNCTION_ARGS)
+{
+    VersionedInt *a = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+    VersionedInt *b = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(a->entries[a->count - 1].value >
+                   b->entries[b->count - 1].value);
+}
+
+/* verint >= verint */
+PG_FUNCTION_INFO_V1(versioned_int_ge_versioned_int);
+Datum versioned_int_ge_versioned_int(PG_FUNCTION_ARGS)
+{
+    VersionedInt *a = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+    VersionedInt *b = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(a->entries[a->count - 1].value >=
+                   b->entries[b->count - 1].value);
+}
+
+/* verint < verint */
+PG_FUNCTION_INFO_V1(versioned_int_lt_versioned_int);
+Datum versioned_int_lt_versioned_int(PG_FUNCTION_ARGS)
+{
+    VersionedInt *a = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+    VersionedInt *b = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(a->entries[a->count - 1].value <
+                   b->entries[b->count - 1].value);
+}
+
+/* verint <= verint */
+PG_FUNCTION_INFO_V1(versioned_int_le_versioned_int);
+Datum versioned_int_le_versioned_int(PG_FUNCTION_ARGS)
+{
+    VersionedInt *a = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+    VersionedInt *b = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(a->entries[a->count - 1].value <=
+                   b->entries[b->count - 1].value);
+}
+
+/*
+ *
  * GIST INDEX METHOD SUPPORT FOR VERSIONED_INT
  *
  */
@@ -545,11 +616,8 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
     value = DatumGetInt64(valueDatum);
     time_at = DatumGetTimestampTz(time_at_datum);
 
-    // Check if this is a leaf entry (raw VersionedInt) or internal node (verint_rect)
     if (entry->leafkey)
     {
-        // This is a leaf - we have raw VersionedInt data
-        // We need to create a bounding box on the fly
         VersionedInt *verint = (VersionedInt *)PG_DETOAST_DATUM(DatumGetPointer(entry->key));
 
         temp_rect.lower_tzbound = verint->entries[0].time;
@@ -561,14 +629,8 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
     }
     else
     {
-        // This is an internal node - we have verint_rect data
         key = (verint_rect *)DatumGetPointer(entry->key);
     }
-
-    elog(NOTICE, "Consistent: checking timestamp=%ld, value=%ld against bounds [%ld-%ld, %ld-%ld]",
-         time_at, value,
-         key->lower_tzbound, key->upper_tzbound,
-         key->lower_val, key->upper_val);
 
     if (key->lower_tzbound <= time_at &&
         time_at <= key->upper_tzbound &&
@@ -640,27 +702,10 @@ Datum versioned_int_compress(PG_FUNCTION_ARGS)
         rect = (verint_rect *)palloc(sizeof(verint_rect));
         verint = (VersionedInt *)PG_DETOAST_DATUM(DatumGetPointer(entry->key));
 
-        // DEBUG: Check if verint is valid
-        elog(NOTICE, "Compress: count=%d, min_val=%ld, max_val=%ld",
-             verint->count, verint->min_val, verint->max_val);
-
-        if (verint->count > 0)
-        {
-            elog(NOTICE, "Compress: first_entry time=%ld, value=%ld",
-                 verint->entries[0].time, verint->entries[0].value);
-            elog(NOTICE, "Compress: last_entry time=%ld, value=%ld",
-                 verint->entries[verint->count - 1].time, verint->entries[verint->count - 1].value);
-        }
-
         rect->lower_tzbound = verint->entries[0].time;
         rect->upper_tzbound = verint->entries[verint->count - 1].time;
         rect->lower_val = verint->min_val;
         rect->upper_val = verint->max_val;
-
-        // DEBUG: Check the resulting bounds
-        elog(NOTICE, "Compress: final bounds [%ld-%ld, %ld-%ld]",
-             rect->lower_tzbound, rect->upper_tzbound,
-             rect->lower_val, rect->upper_val);
 
         retval = palloc(sizeof(GISTENTRY));
         gistentryinit(*retval, PointerGetDatum(rect), entry->rel, entry->page, entry->offset, false);

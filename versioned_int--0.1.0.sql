@@ -103,7 +103,37 @@ LANGUAGE C IMMUTABLE STRICT;
 CREATE FUNCTION bigint_le_versioned_int(BIGINT, versioned_int)
 RETURNS boolean
 AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE STRICT;    
+LANGUAGE C IMMUTABLE STRICT;   
+
+CREATE FUNCTION versioned_int_eq_versioned_int(versioned_int, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION versioned_int_neq_versioned_int(versioned_int, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION versioned_int_gt_versioned_int(versioned_int, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION versioned_int_ge_versioned_int(versioned_int, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION versioned_int_lt_versioned_int(versioned_int, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION versioned_int_le_versioned_int(versioned_int, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
 
 CREATE OPERATOR @ (
     LEFTARG = versioned_int,
@@ -233,6 +263,66 @@ CREATE OPERATOR <= (
     LEFTARG    = bigint,
     RIGHTARG   = versioned_int,
     PROCEDURE  = bigint_le_versioned_int,
+    COMMUTATOR = >=,
+    NEGATOR    = >,
+    RESTRICT   = scalarlesel,
+    JOIN       = scalarlejoinsel
+);
+
+CREATE OPERATOR = (
+    LEFTARG    = versioned_int,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = versioned_int_eq_versioned_int,
+    COMMUTATOR = '=',
+    NEGATOR    = '<>',
+    RESTRICT   = eqsel,
+    JOIN       = eqjoinsel
+);
+
+CREATE OPERATOR <> (
+    LEFTARG    = versioned_int,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = versioned_int_neq_versioned_int,
+    COMMUTATOR = '<>',
+    NEGATOR    = '=',
+    RESTRICT   = neqsel,
+    JOIN       = neqjoinsel
+);
+
+CREATE OPERATOR > (
+    LEFTARG    = versioned_int,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = versioned_int_gt_versioned_int,
+    COMMUTATOR = <,
+    NEGATOR    = <=,
+    RESTRICT   = scalarltsel,
+    JOIN       = scalarltjoinsel
+);
+
+CREATE OPERATOR >= (
+    LEFTARG    = versioned_int,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = versioned_int_ge_versioned_int,
+    COMMUTATOR = <=,
+    NEGATOR    = <,
+    RESTRICT   = scalargesel,
+    JOIN       = scalargejoinsel
+);
+
+CREATE OPERATOR < (
+    LEFTARG    = versioned_int,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = versioned_int_lt_versioned_int,
+    COMMUTATOR = >,
+    NEGATOR    = >=,
+    RESTRICT   = scalargtsel,
+    JOIN       = scalargtjoinsel
+);
+
+CREATE OPERATOR <= (
+    LEFTARG    = versioned_int,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = versioned_int_le_versioned_int,
     COMMUTATOR = >=,
     NEGATOR    = >,
     RESTRICT   = scalarlesel,

@@ -75,6 +75,36 @@ CREATE FUNCTION versioned_int_le_bigint(versioned_int, BIGINT)
     AS 'MODULE_PATHNAME'
     LANGUAGE C IMMUTABLE STRICT;
 
+CREATE FUNCTION bigint_eq_versioned_int(BIGINT, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION bigint_neq_versioned_int(BIGINT, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION bigint_gt_versioned_int(BIGINT, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION bigint_ge_versioned_int(BIGINT, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION bigint_lt_versioned_int(BIGINT, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION bigint_le_versioned_int(BIGINT, versioned_int)
+RETURNS boolean
+AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT;    
+
 CREATE OPERATOR @ (
     LEFTARG = versioned_int,
     RIGHTARG = TIMESTAMPTZ,
@@ -147,6 +177,66 @@ CREATE OPERATOR <= (
     NEGATOR = >,
     RESTRICT = scalarlesel,
     JOIN = scalarlejoinsel
+);
+
+CREATE OPERATOR = (
+    LEFTARG    = bigint,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = bigint_eq_versioned_int,
+    COMMUTATOR = '=',
+    NEGATOR    = '<>',
+    RESTRICT   = eqsel,
+    JOIN       = eqjoinsel
+);
+
+CREATE OPERATOR <> (
+    LEFTARG    = bigint,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = bigint_neq_versioned_int,
+    COMMUTATOR = '<>',
+    NEGATOR    = '=',
+    RESTRICT   = neqsel,
+    JOIN       = neqjoinsel
+);
+
+CREATE OPERATOR > (
+    LEFTARG    = bigint,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = bigint_gt_versioned_int,
+    COMMUTATOR = <,
+    NEGATOR    = <=,
+    RESTRICT   = scalargtsel,      -- var (bigint literal) > col
+    JOIN       = scalargtjoinsel
+);
+
+CREATE OPERATOR >= (
+    LEFTARG    = bigint,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = bigint_ge_versioned_int,
+    COMMUTATOR = <=,
+    NEGATOR    = <,
+    RESTRICT   = scalargesel,
+    JOIN       = scalargejoinsel
+);
+
+CREATE OPERATOR < (
+    LEFTARG    = bigint,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = bigint_lt_versioned_int,
+    COMMUTATOR = >,
+    NEGATOR    = >=,
+    RESTRICT   = scalarltsel,
+    JOIN       = scalarltjoinsel
+);
+
+CREATE OPERATOR <= (
+    LEFTARG    = bigint,
+    RIGHTARG   = versioned_int,
+    PROCEDURE  = bigint_le_versioned_int,
+    COMMUTATOR = >=,
+    NEGATOR    = >,
+    RESTRICT   = scalarlesel,
+    JOIN       = scalarlejoinsel
 );
 
 CREATE OR REPLACE FUNCTION versioned_int_consistent(internal, versioned_int, smallint, oid, internal)

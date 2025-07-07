@@ -401,6 +401,71 @@ Datum versioned_int_le_bigint(PG_FUNCTION_ARGS)
 
 /*
  *
+ * COMPARISON OPERATORS FOR bigint and verint
+ *
+ */
+/* bigint  =  versioned_int */
+PG_FUNCTION_INFO_V1(bigint_eq_versioned_int);
+Datum bigint_eq_versioned_int(PG_FUNCTION_ARGS)
+{
+    int64 bigInt = PG_GETARG_INT64(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(bigInt == versionedInt->entries[versionedInt->count - 1].value);
+}
+
+/* bigint  <>  versioned_int */
+PG_FUNCTION_INFO_V1(bigint_neq_versioned_int);
+Datum bigint_neq_versioned_int(PG_FUNCTION_ARGS)
+{
+    int64 bigInt = PG_GETARG_INT64(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(bigInt != versionedInt->entries[versionedInt->count - 1].value);
+}
+
+/* bigint  >  versioned_int */
+PG_FUNCTION_INFO_V1(bigint_gt_versioned_int);
+Datum bigint_gt_versioned_int(PG_FUNCTION_ARGS)
+{
+    int64 bigInt = PG_GETARG_INT64(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(bigInt > versionedInt->entries[versionedInt->count - 1].value);
+}
+
+/* bigint  >=  versioned_int */
+PG_FUNCTION_INFO_V1(bigint_ge_versioned_int);
+Datum bigint_ge_versioned_int(PG_FUNCTION_ARGS)
+{
+    int64 bigInt = PG_GETARG_INT64(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(bigInt >= versionedInt->entries[versionedInt->count - 1].value);
+}
+
+/* bigint  <  versioned_int */
+PG_FUNCTION_INFO_V1(bigint_lt_versioned_int);
+Datum bigint_lt_versioned_int(PG_FUNCTION_ARGS)
+{
+    int64 bigInt = PG_GETARG_INT64(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(bigInt < versionedInt->entries[versionedInt->count - 1].value);
+}
+
+/* bigint  <=  versioned_int */
+PG_FUNCTION_INFO_V1(bigint_le_versioned_int);
+Datum bigint_le_versioned_int(PG_FUNCTION_ARGS)
+{
+    int64 bigInt = PG_GETARG_INT64(0);
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_BOOL(bigInt <= versionedInt->entries[versionedInt->count - 1].value);
+}
+
+/*
+ *
  * GIST INDEX METHOD SUPPORT FOR VERSIONED_INT
  *
  */

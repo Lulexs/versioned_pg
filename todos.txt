@@ -1,2 +1,0 @@
-now verint op bigint works
-# todo make bigint op verint work

@@ -420,6 +420,32 @@ typedef struct
     int64 upper_val;
 } verint_rect;
 
+PG_FUNCTION_INFO_V1(verint_rect_in);
+Datum verint_rect_in(PG_FUNCTION_ARGS)
+{
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED)),
+            errmsg("Conversion between text representation and verint_rect is not possible"));
+}
+
+PG_FUNCTION_INFO_V1(verint_rect_out);
+Datum verint_rect_out(PG_FUNCTION_ARGS)
+{
+    verint_rect *rect = (verint_rect *)PG_GETARG_POINTER(0);
+
+    const char *lower_ts_str = timestamptz_to_str(rect->lower_tzbound);
+
+    const char *upper_ts_str = timestamptz_to_str(rect->upper_tzbound);
+
+    char *result = psprintf("(%s,%s,%lld,%lld)",
+                            lower_ts_str,
+                            upper_ts_str,
+                            (long long)rect->lower_val,
+                            (long long)rect->upper_val);
+
+    PG_RETURN_CSTRING(result);
+}
+
 /*
  *
  * versioned_int's gist consistency function
@@ -429,15 +455,16 @@ PG_FUNCTION_INFO_V1(versioned_int_consistent);
 Datum versioned_int_consistent(PG_FUNCTION_ARGS)
 {
     verint_rect *key;
+    verint_rect temp_rect;
     bool isNull;
     Datum valueDatum, time_at_datum;
     int64 value;
     TimestampTz time_at;
     GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
     Datum query_datum = PG_GETARG_DATUM(1);
-    HeapTupleHeader t = DatumGetHeapTupleHeader(query_datum);
-    // StrategyNumber strategy = (StrategyNumber)PG_GETARG_UINT16(2); Currently only supported strategy is @=
     bool *recheck = (bool *)PG_GETARG_POINTER(4);
+
+    HeapTupleHeader t = DatumGetHeapTupleHeader(query_datum);
 
     time_at_datum = GetAttributeByName(t, "ts", &isNull);
     if (isNull)
@@ -453,12 +480,31 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
     value = DatumGetInt64(valueDatum);
     time_at = DatumGetTimestampTz(time_at_datum);
 
-    key = (verint_rect *)DatumGetPointer(entry->key);
+    // Check if this is a leaf entry (raw VersionedInt) or internal node (verint_rect)
+    if (entry->leafkey)
+    {
+        // This is a leaf - we have raw VersionedInt data
+        // We need to create a bounding box on the fly
+        VersionedInt *verint = (VersionedInt *)PG_DETOAST_DATUM(DatumGetPointer(entry->key));
+
+        temp_rect.lower_tzbound = verint->entries[0].time;
+        temp_rect.upper_tzbound = verint->entries[verint->count - 1].time;
+        temp_rect.lower_val = verint->min_val;
+        temp_rect.upper_val = verint->max_val;
+
+        key = &temp_rect;
+    }
+    else
+    {
+        // This is an internal node - we have verint_rect data
+        key = (verint_rect *)DatumGetPointer(entry->key);
+    }
 
     elog(NOTICE, "Consistent: checking timestamp=%ld, value=%ld against bounds [%ld-%ld, %ld-%ld]",
          time_at, value,
          key->lower_tzbound, key->upper_tzbound,
          key->lower_val, key->upper_val);
+
     if (key->lower_tzbound <= time_at &&
         time_at <= key->upper_tzbound &&
         key->lower_val <= value &&

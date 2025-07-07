@@ -154,15 +154,27 @@ RETURNS bool
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
-CREATE TYPE verint_rect AS (
-  lower_tzbound timestamp with time zone,
-  upper_tzbound timestamp with time zone,
-  lower_val bigint,
-  upper_val bigint
-);
+CREATE TYPE verint_rect;
 
+CREATE FUNCTION verint_rect_in(cstring)
+    RETURNS verint_rect
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE FUNCTION verint_rect_out(verint_rect)
+    RETURNS cstring
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE TYPE verint_rect (
+    internallength = 32,
+    input = verint_rect_in,
+    output = verint_rect_out,
+    alignment = double,
+    storage = plain
+);
 CREATE OR REPLACE FUNCTION versioned_int_union(internal, internal)
-RETURNS internal
+RETURNS verint_rect
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
@@ -176,7 +188,7 @@ RETURNS internal
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
-CREATE OR REPLACE FUNCTION versioned_int_same(internal, internal, internal)
+CREATE OR REPLACE FUNCTION versioned_int_same(verint_rect, verint_rect, internal)
 RETURNS internal
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
@@ -195,4 +207,4 @@ CREATE OPERATOR CLASS gist_versioned_int_ops
         FUNCTION        5           versioned_int_penalty,
         FUNCTION        6           versioned_int_picksplit,
         FUNCTION        7           versioned_int_same,
-        STORAGE internal;
+        STORAGE verint_rect;

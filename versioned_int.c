@@ -884,3 +884,35 @@ Datum versioned_int_picksplit(PG_FUNCTION_ARGS)
 
     PG_RETURN_POINTER(v);
 }
+
+/*
+ *
+ * Some Btree index method functions so that versioned_int could use
+ * ORDER BY, DISTINCT etc.
+ *
+ */
+static int versioned_int_cmp_internal(VersionedInt *a, VersionedInt *b)
+{
+    int64 av = a->entries[a->count - 1].value;
+    int64 bv = b->entries[b->count - 1].value;
+
+    if (av < bv)
+    {
+        return -1;
+    }
+    if (av > bv)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+PG_FUNCTION_INFO_V1(versioned_int_btree_cmp);
+Datum versioned_int_btree_cmp(PG_FUNCTION_ARGS)
+{
+    VersionedInt *a = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+    VersionedInt *b = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_INT32(versioned_int_cmp_internal(a, b));
+}

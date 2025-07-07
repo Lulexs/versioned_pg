@@ -388,3 +388,17 @@ CREATE OPERATOR CLASS gist_versioned_int_ops
         FUNCTION        6           versioned_int_picksplit,
         FUNCTION        7           versioned_int_same,
         STORAGE verint_rect;
+
+CREATE OR REPLACE FUNCTION versioned_int_btree_cmp(versioned_int, versioned_int)
+RETURNS integer
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+CREATE OPERATOR CLASS versioned_int_ops
+    DEFAULT FOR TYPE versioned_int USING btree AS
+    OPERATOR 1  <  (versioned_int, versioned_int) ,
+    OPERATOR 2  <= (versioned_int, versioned_int) ,
+    OPERATOR 3  =  (versioned_int, versioned_int) ,
+    OPERATOR 4  >= (versioned_int, versioned_int) ,
+    OPERATOR 5  >  (versioned_int, versioned_int) ,
+    FUNCTION 1  versioned_int_btree_cmp(versioned_int, versioned_int);

@@ -228,6 +228,10 @@ VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, 
     {
         return NULL;
     }
+    if (timestamp >= entries[versionedInt->count - 1].time)
+    {
+        return &entries[versionedInt->count - 1];
+    }
 
     while (l <= r)
     {
@@ -590,8 +594,6 @@ Datum verint_rect_out(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_consistent);
 Datum versioned_int_consistent(PG_FUNCTION_ARGS)
 {
-    verint_rect *key;
-    verint_rect temp_rect;
     bool isNull;
     Datum valueDatum, time_at_datum;
     int64 value;
@@ -599,6 +601,7 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
     GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
     Datum query_datum = PG_GETARG_DATUM(1);
     bool *recheck = (bool *)PG_GETARG_POINTER(4);
+    verint_rect *key = (verint_rect *)DatumGetPointer(entry->key);
 
     HeapTupleHeader t = DatumGetHeapTupleHeader(query_datum);
 
@@ -615,22 +618,6 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
 
     value = DatumGetInt64(valueDatum);
     time_at = DatumGetTimestampTz(time_at_datum);
-
-    if (entry->leafkey)
-    {
-        VersionedInt *verint = (VersionedInt *)PG_DETOAST_DATUM(DatumGetPointer(entry->key));
-
-        temp_rect.lower_tzbound = verint->entries[0].time;
-        temp_rect.upper_tzbound = verint->entries[verint->count - 1].time;
-        temp_rect.lower_val = verint->min_val;
-        temp_rect.upper_val = verint->max_val;
-
-        key = &temp_rect;
-    }
-    else
-    {
-        key = (verint_rect *)DatumGetPointer(entry->key);
-    }
 
     if (key->lower_tzbound <= time_at &&
         time_at <= key->upper_tzbound &&
@@ -703,7 +690,7 @@ Datum versioned_int_compress(PG_FUNCTION_ARGS)
         verint = (VersionedInt *)PG_DETOAST_DATUM(DatumGetPointer(entry->key));
 
         rect->lower_tzbound = verint->entries[0].time;
-        rect->upper_tzbound = verint->entries[verint->count - 1].time;
+        rect->upper_tzbound = PG_INT64_MAX - 1;
         rect->lower_val = verint->min_val;
         rect->upper_val = verint->max_val;
 

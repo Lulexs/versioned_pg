@@ -5,6 +5,11 @@ CREATE FUNCTION versioned_int_in(cstring)
     AS 'MODULE_PATHNAME'
     LANGUAGE C IMMUTABLE STRICT;
 
+CREATE FUNCTION versioned_int_typemod_in(cstring[])
+    RETURNS int4
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C IMMUTABLE STRICT;
+
 CREATE FUNCTION make_versioned(versioned_int, BIGINT)
     RETURNS versioned_int
     AS 'MODULE_PATHNAME'
@@ -15,10 +20,17 @@ CREATE FUNCTION versioned_int_out(versioned_int)
     AS 'MODULE_PATHNAME'
     LANGUAGE C IMMUTABLE STRICT;
 
+CREATE FUNCTION versioned_int_typemod_out(int4)
+    RETURNS cstring
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C IMMUTABLE STRICT;
+
 CREATE TYPE versioned_int (
     internallength = VARIABLE,
     input = versioned_int_in,
     output = versioned_int_out,
+    typmod_in = versioned_int_typemod_in,
+    typmod_out = versioned_int_typemod_out,
     alignment = double,
     storage = extended
 );

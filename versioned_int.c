@@ -66,6 +66,80 @@ Datum versioned_int_in(PG_FUNCTION_ARGS)
 
 /*
  *
+ * Type modifier Input function for versioned_int, i.e. function that
+ * takes list of strings and returns int4 (internal typemod) value
+ *
+ */
+PG_FUNCTION_INFO_V1(versioned_int_typemod_in);
+Datum versioned_int_typemod_in(PG_FUNCTION_ARGS)
+{
+    ArrayType *ta = PG_GETARG_ARRAYTYPE_P(0);
+    char **args;
+    int nargs;
+    int32 typmod;
+
+    args = (char **)ARR_DATA_PTR(ta);
+    nargs = ArrayGetNItems(ARR_NDIM(ta), ARR_DIMS(ta));
+
+    if (nargs != 2)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED)),
+                errmsg("Number of type modifiers must be 2"));
+    }
+
+    if (strcmp("N", args[1]) == 0)
+    {
+        typmod = 1;
+    }
+    else if (strcmp("D", args[1]) == 0)
+    {
+        typmod = 2;
+    }
+    else
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED)),
+                errmsg("Unrecognized type modifier %s", args[1]));
+    }
+
+    PG_RETURN_INT32(typmod);
+}
+
+/*
+ *
+ * Type modifier Input function for versioned_int, i.e. function that
+ * takes list of strings and returns int4 (internal typemod) value
+ *
+ */
+PG_FUNCTION_INFO_V1(versioned_int_typemod_out);
+Datum versioned_int_typemod_out(PG_FUNCTION_ARGS)
+{
+    int32 typmod = PG_GETARG_INT32(0);
+    char *result;
+
+    if (typmod < 0)
+    {
+        PG_RETURN_CSTRING(pstrdup(""));
+    }
+    else if (typmod == 1)
+    {
+        result = psprintf("(%d, %s)", 1, "N");
+    }
+    else if (typmod == 2)
+    {
+        result = psprintf("(%d, %s)", 1, "D");
+    }
+    else
+    {
+        PG_RETURN_CSTRING(pstrdup(""));
+    }
+
+    PG_RETURN_CSTRING(result);
+}
+
+/*
+ *
  * make_versioned is a function that takes two arguments - versioned_int
  * and new value of that versioned int and adds new value to int's history.
  * can be called like

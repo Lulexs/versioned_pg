@@ -10,6 +10,9 @@
 #include <stdlib.h>
 
 #define MAX_VERSIONED_INT_SIZE (512 * 1024 * 1024)
+#define VERINT_MODIFIER_MAX_VALUE (1 << 24)
+#define MODIFIER_CHARSHIFT (24)
+#define LEN_MASK ((1 << MODIFIER_CHARSHIFT) - 1)
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
@@ -73,36 +76,36 @@ Datum versioned_int_in(PG_FUNCTION_ARGS)
 PG_FUNCTION_INFO_V1(versioned_int_typemod_in);
 Datum versioned_int_typemod_in(PG_FUNCTION_ARGS)
 {
-    ArrayType *ta = PG_GETARG_ARRAYTYPE_P(0);
-    char **args;
-    int nargs;
+    ArrayType *arr = PG_GETARG_ARRAYTYPE_P(0);
+    Datum *elems;
+    int n_elems;
     int32 typmod;
+    int64 len;
+    char *cstr;
+    unsigned char ch;
 
-    args = (char **)ARR_DATA_PTR(ta);
-    nargs = ArrayGetNItems(ARR_NDIM(ta), ARR_DIMS(ta));
+    deconstruct_array(arr, CSTRINGOID, -2, false, 'c',
+                      &elems, NULL, &n_elems);
 
-    if (nargs != 2)
-    {
+    if (n_elems != 2)
         ereport(ERROR,
-                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED)),
-                errmsg("Number of type modifiers must be 2"));
-    }
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("type modifier requires exactly (length, char)")));
 
-    if (strcmp("N", args[1]) == 0)
-    {
-        typmod = 1;
-    }
-    else if (strcmp("D", args[1]) == 0)
-    {
-        typmod = 2;
-    }
-    else
-    {
+    len = strtol(DatumGetCString(elems[0]), NULL, 10);
+    if (len <= 0 || len > VERINT_MODIFIER_MAX_VALUE)
         ereport(ERROR,
-                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED)),
-                errmsg("Unrecognized type modifier %s", args[1]));
-    }
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("length must be between 1 and 2^24")));
 
+    cstr = DatumGetCString(elems[1]);
+    if (strlen(cstr) != 1)
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("char modifier must be exactly one character")));
+    ch = cstr[0];
+
+    typmod = (int32)len | ((int32)ch << MODIFIER_CHARSHIFT);
     PG_RETURN_INT32(typmod);
 }
 
@@ -116,26 +119,16 @@ PG_FUNCTION_INFO_V1(versioned_int_typemod_out);
 Datum versioned_int_typemod_out(PG_FUNCTION_ARGS)
 {
     int32 typmod = PG_GETARG_INT32(0);
-    char *result;
+    int len;
+    char ch;
 
     if (typmod < 0)
-    {
         PG_RETURN_CSTRING(pstrdup(""));
-    }
-    else if (typmod == 1)
-    {
-        result = psprintf("(%d, %s)", 1, "N");
-    }
-    else if (typmod == 2)
-    {
-        result = psprintf("(%d, %s)", 1, "D");
-    }
-    else
-    {
-        PG_RETURN_CSTRING(pstrdup(""));
-    }
 
-    PG_RETURN_CSTRING(result);
+    len = typmod & LEN_MASK;
+    ch = (typmod >> MODIFIER_CHARSHIFT) & 0xFF;
+
+    PG_RETURN_CSTRING(psprintf("(%d,'%c')", len, ch));
 }
 
 /*

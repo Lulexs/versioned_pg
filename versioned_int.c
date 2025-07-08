@@ -5,6 +5,7 @@
 #include "funcapi.h"
 #include "access/gist.h"
 #include "access/heapam.h"
+#include "nodes/nodeFuncs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -129,6 +130,24 @@ Datum versioned_int_typemod_out(PG_FUNCTION_ARGS)
     ch = (typmod >> MODIFIER_CHARSHIFT) & 0xFF;
 
     PG_RETURN_CSTRING(psprintf("(%d,'%c')", len, ch));
+}
+
+/*
+ *
+ * Helper function that extracts typmmod info from fcinfo.
+ * It's hacky, and function that uses this cannot be called via
+ * DirectFuncCall
+ *
+ */
+static int32 versioned_int_retention_typmod(FunctionCallInfo fcinfo)
+{
+    if (fcinfo && fcinfo->flinfo && fcinfo->flinfo->fn_expr)
+    {
+        FuncExpr *fexpr = (FuncExpr *)fcinfo->flinfo->fn_expr;
+        return exprTypmod((Node *)fexpr);
+    }
+
+    return -1;
 }
 
 /*

@@ -110,7 +110,7 @@ PG_FUNCTION_INFO_V1(versioned_int_picksplit);
 PG_FUNCTION_INFO_V1(versioned_int_btree_cmp);
 static int versioned_int_cmp_internal(VersionedInt *a, VersionedInt *b);
 
-static VersionedInt *enforce_N_retention(VersionedInt *versionedInt, int32 len);
+static VersionedInt *enforce_N_retention(VersionedInt *versionedInt, int32 maxCap);
 static VersionedInt *enforce_Time_retention(VersionedInt *versionedInt, int32 len);
 static VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp);
 static inline float8 get_area(const verint_rect *r);
@@ -210,6 +210,8 @@ Datum versioned_int_enforce_modifier(PG_FUNCTION_ARGS)
     int32 typmod = PG_GETARG_INT32(1);
     int32 len = typmod & LEN_MASK;
     char ch = (typmod >> MODIFIER_CHARSHIFT) & 0xFF;
+
+    elog(NOTICE, "HERE with some shit %d %d %c", typmod, len, ch);
 
     if (ch == 'N')
     {
@@ -774,9 +776,24 @@ Datum versioned_int_btree_cmp(PG_FUNCTION_ARGS)
     PG_RETURN_INT32(versioned_int_cmp_internal(a, b));
 }
 
-static VersionedInt *enforce_N_retention(VersionedInt *versionedInt, int32 len)
+static VersionedInt *enforce_N_retention(VersionedInt *versionedInt, int32 maxCap)
 {
-    return NULL;
+    VersionedInt *newVerint;
+    int32 drop;
+    if (versionedInt->cap <= maxCap && versionedInt->count <= maxCap)
+    {
+        return versionedInt;
+    }
+
+    newVerint = (VersionedInt *)palloc0(sizeof(VersionedInt) + maxCap * sizeof(VersionedIntEntry));
+    SET_VARSIZE(newVerint, sizeof(VersionedInt) + maxCap * sizeof(VersionedIntEntry));
+    newVerint->cap = maxCap;
+    newVerint->count = Min(versionedInt->count, maxCap);
+    drop = Max(0, versionedInt->count - maxCap);
+
+    memcpy(newVerint->entries, &versionedInt->entries[drop], newVerint->count * sizeof(VersionedIntEntry));
+
+    return newVerint;
 }
 
 static VersionedInt *enforce_Time_retention(VersionedInt *versionedInt, int32 len)

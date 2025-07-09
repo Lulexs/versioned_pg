@@ -35,6 +35,15 @@ CREATE TYPE versioned_int (
     storage = extended
 );
 
+CREATE FUNCTION versioned_int_enforce_modifier(versioned_int, integer)
+    RETURNS versioned_int
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C IMMUTABLE STRICT;
+
+CREATE CAST (versioned_int AS versioned_int)
+    WITH FUNCTION versioned_int_enforce_modifier(versioned_int, integer)
+    AS IMPLICIT;
+
 CREATE TYPE ts_int AS (
     ts TIMESTAMPTZ,
     value BIGINT

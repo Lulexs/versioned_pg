@@ -1,6 +1,6 @@
 CREATE TYPE versioned_int;
 
-CREATE FUNCTION versioned_int_in(cstring)
+CREATE FUNCTION versioned_int_in(cstring, oid, integer)
     RETURNS versioned_int
     AS 'MODULE_PATHNAME'
     LANGUAGE C IMMUTABLE STRICT;
@@ -13,7 +13,7 @@ CREATE FUNCTION versioned_int_typemod_in(cstring[])
 CREATE FUNCTION make_versioned(versioned_int, BIGINT)
     RETURNS versioned_int
     AS 'MODULE_PATHNAME'
-    LANGUAGE C VOLATILE;
+    LANGUAGE C STRICT VOLATILE;
 
 CREATE FUNCTION versioned_int_out(versioned_int)
     RETURNS cstring

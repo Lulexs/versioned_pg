@@ -47,11 +47,75 @@ typedef struct
     int32 v1_len_;
     int32 count;
     int32 cap;
-    int32 pad_;
-    int64 min_val;
-    int64 max_val;
+    int32 max_cap;
+    int64 valid;
     VersionedIntEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } VersionedInt;
+
+/*
+ *
+ * Helper struct that holds values array and nulls array required
+ * for specifying return in srfs.
+ *
+ */
+typedef struct
+{
+    Datum values[2];
+    bool nulls[2];
+} NullsAndValues;
+
+/*
+ *
+ * This struct represents node of Gist index. It is essentially
+ * bounding box (rectangle) whose dimensions are time and value
+ *
+ */
+
+typedef struct
+{
+    TimestampTz lower_tzbound;
+    TimestampTz upper_tzbound;
+    int64 lower_val;
+    int64 upper_val;
+} verint_rect;
+
+typedef struct
+{
+    int64 verint_min;
+    int64 verint_max;
+} VerintMinMax;
+
+PG_FUNCTION_INFO_V1(versioned_int_in);
+PG_FUNCTION_INFO_V1(versioned_int_out);
+PG_FUNCTION_INFO_V1(versioned_int_typemod_in);
+PG_FUNCTION_INFO_V1(versioned_int_typemod_out);
+PG_FUNCTION_INFO_V1(make_versioned);
+PG_FUNCTION_INFO_V1(get_history);
+PG_FUNCTION_INFO_V1(versioned_int_at_time);
+PG_FUNCTION_INFO_V1(versioned_int_at_time_eq);
+
+// Gist support
+PG_FUNCTION_INFO_V1(verint_rect_in);
+PG_FUNCTION_INFO_V1(verint_rect_out);
+PG_FUNCTION_INFO_V1(versioned_int_consistent);
+PG_FUNCTION_INFO_V1(versioned_int_union);
+PG_FUNCTION_INFO_V1(versioned_int_compress);
+PG_FUNCTION_INFO_V1(versioned_int_penalty);
+PG_FUNCTION_INFO_V1(versioned_int_same);
+PG_FUNCTION_INFO_V1(versioned_int_picksplit);
+
+// Btree
+PG_FUNCTION_INFO_V1(versioned_int_btree_cmp);
+static int versioned_int_cmp_internal(VersionedInt *a, VersionedInt *b);
+
+static VersionedInt *make_versioned_int(int64 newValue, TimestampTz time, int32 typmod);
+static VersionedInt *update_versioned_int_with_N_retention(VersionedInt *versionedInt, int64 newValue, TimestampTz time);
+static VersionedInt *update_versioned_int_with_Time_retention(VersionedInt *versionedInt, int64 newValue, TimestampTz time);
+static VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp);
+static inline float8 get_area(const verint_rect *r);
+static inline float8 get_union_area(const verint_rect *r1, const verint_rect *r2);
+static inline void get_union_rect(const verint_rect *r1, const verint_rect *r2, verint_rect *dst);
+static VerintMinMax get_versioned_ints_min_max(VersionedInt *verint);
 
 /*
  *
@@ -60,12 +124,25 @@ typedef struct
  * this conversion is disabled.
  *
  */
-PG_FUNCTION_INFO_V1(versioned_int_in);
 Datum versioned_int_in(PG_FUNCTION_ARGS)
 {
-    ereport(ERROR,
-            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED)),
-            errmsg("Conversion between text representation and versioned_int is not possible"));
+    char *str = PG_GETARG_CSTRING(0);
+    int64 value;
+    int32 typmod = PG_GETARG_INT32(2);
+    VersionedInt *versionedInt;
+    TimestampTz time = GetCurrentTimestamp();
+    elog(NOTICE, "RECIEVED TYPMOD: %d", typmod);
+
+    if (sscanf(str, "%ld", &value) != 1)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                 errmsg("invalid input syntax for type %s: \"%s\"",
+                        "versioned_int", str)));
+    }
+
+    versionedInt = make_versioned_int(value, time, typmod);
+    PG_RETURN_POINTER(versionedInt);
 }
 
 /*
@@ -74,7 +151,6 @@ Datum versioned_int_in(PG_FUNCTION_ARGS)
  * takes list of strings and returns int4 (internal typemod) value
  *
  */
-PG_FUNCTION_INFO_V1(versioned_int_typemod_in);
 Datum versioned_int_typemod_in(PG_FUNCTION_ARGS)
 {
     ArrayType *arr = PG_GETARG_ARRAYTYPE_P(0);
@@ -116,7 +192,6 @@ Datum versioned_int_typemod_in(PG_FUNCTION_ARGS)
  * takes list of strings and returns int4 (internal typemod) value
  *
  */
-PG_FUNCTION_INFO_V1(versioned_int_typemod_out);
 Datum versioned_int_typemod_out(PG_FUNCTION_ARGS)
 {
     int32 typmod = PG_GETARG_INT32(0);
@@ -134,89 +209,26 @@ Datum versioned_int_typemod_out(PG_FUNCTION_ARGS)
 
 /*
  *
- * Helper function that extracts typmmod info from fcinfo.
- * It's hacky, and function that uses this cannot be called via
- * DirectFuncCall
- *
- */
-static int32 versioned_int_retention_typmod(FunctionCallInfo fcinfo)
-{
-    if (fcinfo && fcinfo->flinfo && fcinfo->flinfo->fn_expr)
-    {
-        FuncExpr *fexpr = (FuncExpr *)fcinfo->flinfo->fn_expr;
-        return exprTypmod((Node *)fexpr);
-    }
-
-    return -1;
-}
-
-/*
- *
  * make_versioned is a function that takes two arguments - versioned_int
  * and new value of that versioned int and adds new value to int's history.
- * can be called like
- * make_versioned(null, new_value) or
+ * is called like
  * make_versioned(verint, new_value)
  *
  */
-PG_FUNCTION_INFO_V1(make_versioned);
 Datum make_versioned(PG_FUNCTION_ARGS)
 {
-    Size size;
-    VersionedInt *versionedInt = NULL;
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
     VersionedInt *newVersionedInt = NULL;
-    int64 newValue;
+    int64 newValue = PG_GETARG_INT64(1);
     TimestampTz time = GetCurrentTimestamp();
-    if (!PG_ARGISNULL(0))
-    {
-        versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
-    }
-    if (PG_ARGISNULL(1))
-    {
-        ereport(ERROR,
-                (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED)),
-                errmsg("Cannot insert \"null\" as the value of versioned_int type"));
-    }
-    newValue = PG_GETARG_INT64(1);
 
-    if (versionedInt == NULL)
+    if (versionedInt->valid == -1)
     {
-        versionedInt = (VersionedInt *)palloc0(sizeof(VersionedInt) + sizeof(VersionedIntEntry));
-        SET_VARSIZE(versionedInt, sizeof(VersionedInt) + sizeof(VersionedIntEntry));
-        versionedInt->cap = 1;
-        versionedInt->count = 1;
-        versionedInt->entries[0].value = newValue;
-        versionedInt->entries[0].time = time;
-        versionedInt->min_val = newValue;
-        versionedInt->max_val = newValue;
-        newVersionedInt = versionedInt;
+        newVersionedInt = update_versioned_int_with_N_retention(versionedInt, newValue, time);
     }
     else
     {
-        if (versionedInt->count == versionedInt->cap)
-        {
-            size = sizeof(VersionedInt) + 2 * versionedInt->cap * sizeof(VersionedIntEntry);
-            if (size >= (Size)MAX_VERSIONED_INT_SIZE)
-            {
-                ereport(ERROR,
-                        (errcode(ERRCODE_OUT_OF_MEMORY)),
-                        errmsg("Extending column would push it pass the size of 512MB. Aborting"));
-            }
-        }
-        else
-        {
-            size = sizeof(VersionedInt) + versionedInt->cap * sizeof(VersionedIntEntry);
-        }
-        newVersionedInt = (VersionedInt *)palloc0(size);
-        SET_VARSIZE(newVersionedInt, size);
-        newVersionedInt->cap = 2 * versionedInt->cap;
-        newVersionedInt->count = versionedInt->count;
-        memcpy(newVersionedInt->entries, versionedInt->entries, versionedInt->count * sizeof(VersionedIntEntry));
-        newVersionedInt->entries[newVersionedInt->count].value = newValue;
-        newVersionedInt->entries[newVersionedInt->count].time = time;
-        newVersionedInt->min_val = Min(versionedInt->min_val, newValue);
-        newVersionedInt->max_val = Max(versionedInt->max_val, newValue);
-        newVersionedInt->count += 1;
+        newVersionedInt = update_versioned_int_with_Time_retention(versionedInt, newValue, time);
     }
 
     PG_RETURN_POINTER(newVersionedInt);
@@ -224,23 +236,10 @@ Datum make_versioned(PG_FUNCTION_ARGS)
 
 /*
  *
- * Helper struct that holds values array and nulls array required
- * for specifying return in srfs.
- *
- */
-typedef struct
-{
-    Datum values[2];
-    bool nulls[2];
-} NullsAndValues;
-
-/*
- *
  * Function that returns versioned_int's history in format
  * timetsamptz, int64
  *
  */
-PG_FUNCTION_INFO_V1(get_history);
 Datum get_history(PG_FUNCTION_ARGS)
 {
     FuncCallContext *funcctx;
@@ -297,61 +296,10 @@ Datum get_history(PG_FUNCTION_ARGS)
 
 /*
  *
- * Helper function that given versioned_int and timestamp returns
- * versioned_ints value at that time or null if it didn't exist at
- * said time
- *
- */
-VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp);
-VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp)
-{
-    VersionedIntEntry *entries = versionedInt->entries;
-    int32 l = 0;
-    int32 r = versionedInt->count - 1;
-    int32 mid;
-
-    if (versionedInt->count == 0)
-    {
-        return NULL;
-    }
-    if (timestamp >= entries[versionedInt->count - 1].time)
-    {
-        return &entries[versionedInt->count - 1];
-    }
-
-    while (l <= r)
-    {
-        mid = l + (r - l) / 2;
-
-        if (entries[mid].time == timestamp)
-        {
-            return &entries[mid];
-        }
-        else if (entries[mid].time < timestamp)
-        {
-            l = mid + 1;
-        }
-        else
-        {
-            r = mid - 1;
-        }
-    }
-
-    if (r >= 0)
-    {
-        return &entries[r];
-    }
-
-    return NULL;
-}
-
-/*
- *
  * Function that is used for getting versioned_int's value at timestamp, i.e
  * when user uses @ operator (versioned_int @ timestamp)
  *
  */
-PG_FUNCTION_INFO_V1(versioned_int_at_time);
 Datum versioned_int_at_time(PG_FUNCTION_ARGS)
 {
     VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
@@ -372,7 +320,6 @@ Datum versioned_int_at_time(PG_FUNCTION_ARGS)
  * In sql that would look like versioned_int @= (timestamp, value).
  *
  */
-PG_FUNCTION_INFO_V1(versioned_int_at_time_eq);
 Datum versioned_int_at_time_eq(PG_FUNCTION_ARGS)
 {
     VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
@@ -414,7 +361,6 @@ Datum versioned_int_at_time_eq(PG_FUNCTION_ARGS)
  * versioned_int's current value.
  *
  */
-PG_FUNCTION_INFO_V1(versioned_int_out);
 Datum versioned_int_out(PG_FUNCTION_ARGS)
 {
     VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
@@ -422,6 +368,501 @@ Datum versioned_int_out(PG_FUNCTION_ARGS)
 
     result = psprintf("%ld", versionedInt->entries[versionedInt->count - 1].value);
     PG_RETURN_CSTRING(result);
+}
+
+/*
+ *
+ * GIST INDEX METHOD SUPPORT FOR VERSIONED_INT
+ *
+ */
+Datum verint_rect_in(PG_FUNCTION_ARGS)
+{
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED)),
+            errmsg("Conversion between text representation and verint_rect is not possible"));
+}
+
+Datum verint_rect_out(PG_FUNCTION_ARGS)
+{
+    verint_rect *rect = (verint_rect *)PG_GETARG_POINTER(0);
+
+    const char *lower_ts_str = timestamptz_to_str(rect->lower_tzbound);
+
+    const char *upper_ts_str = timestamptz_to_str(rect->upper_tzbound);
+
+    char *result = psprintf("(%s,%s,%lld,%lld)",
+                            lower_ts_str,
+                            upper_ts_str,
+                            (long long)rect->lower_val,
+                            (long long)rect->upper_val);
+
+    PG_RETURN_CSTRING(result);
+}
+
+/*
+ *
+ * versioned_int's gist consistency function
+ *
+ */
+Datum versioned_int_consistent(PG_FUNCTION_ARGS)
+{
+    bool isNull;
+    Datum valueDatum, time_at_datum;
+    int64 value;
+    TimestampTz time_at;
+    GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
+    Datum query_datum = PG_GETARG_DATUM(1);
+    bool *recheck = (bool *)PG_GETARG_POINTER(4);
+    verint_rect *key = (verint_rect *)DatumGetPointer(entry->key);
+
+    HeapTupleHeader t = DatumGetHeapTupleHeader(query_datum);
+
+    time_at_datum = GetAttributeByName(t, "ts", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR, (errmsg("ts cannot be NULL")));
+    }
+    valueDatum = GetAttributeByName(t, "value", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR, (errmsg("value cannot be NULL")));
+    }
+
+    value = DatumGetInt64(valueDatum);
+    time_at = DatumGetTimestampTz(time_at_datum);
+
+    if (key->lower_tzbound <= time_at &&
+        time_at <= key->upper_tzbound &&
+        key->lower_val <= value &&
+        value <= key->upper_val)
+    {
+        if (GIST_LEAF(entry))
+        {
+            *recheck = true;
+            PG_RETURN_BOOL(true);
+        }
+        else
+        {
+            *recheck = false;
+            PG_RETURN_BOOL(true);
+        }
+    }
+    *recheck = false;
+    PG_RETURN_BOOL(false);
+}
+
+/*
+ *
+ * versioned_int's gist union function
+ *
+ */
+Datum versioned_int_union(PG_FUNCTION_ARGS)
+{
+    int i;
+    verint_rect *nodeentry;
+    GistEntryVector *entryvec = (GistEntryVector *)PG_GETARG_POINTER(0);
+    GISTENTRY *ent = entryvec->vector;
+    int n = entryvec->n;
+    verint_rect *ret = (verint_rect *)palloc0(sizeof(verint_rect));
+
+    ret->lower_tzbound = PG_INT64_MAX;
+    ret->upper_tzbound = PG_INT64_MIN;
+    ret->lower_val = PG_INT64_MAX;
+    ret->upper_val = PG_INT64_MIN;
+
+    for (i = 0; i < n; i++)
+    {
+        nodeentry = (verint_rect *)DatumGetPointer(ent[i].key);
+        ret->lower_tzbound = Min(ret->lower_tzbound, nodeentry->lower_tzbound);
+        ret->upper_tzbound = Max(ret->upper_tzbound, nodeentry->upper_tzbound);
+        ret->lower_val = Min(ret->lower_val, nodeentry->lower_val);
+        ret->upper_val = Max(ret->upper_val, nodeentry->upper_val);
+    }
+
+    PG_RETURN_POINTER(ret);
+}
+
+/*
+ *
+ * versioned_int's gist compress function
+ *
+ */
+Datum versioned_int_compress(PG_FUNCTION_ARGS)
+{
+    GISTENTRY *retval;
+    verint_rect *rect;
+    VersionedInt *verint;
+    GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
+    VerintMinMax minmax;
+
+    if (entry->leafkey)
+    {
+        rect = (verint_rect *)palloc(sizeof(verint_rect));
+        verint = (VersionedInt *)PG_DETOAST_DATUM(DatumGetPointer(entry->key));
+
+        rect->lower_tzbound = verint->entries[0].time;
+        rect->upper_tzbound = PG_INT64_MAX - 1;
+        minmax = get_versioned_ints_min_max(verint);
+        rect->lower_val = minmax.verint_min;
+        rect->upper_val = minmax.verint_max;
+
+        retval = palloc(sizeof(GISTENTRY));
+        gistentryinit(*retval, PointerGetDatum(rect), entry->rel, entry->page, entry->offset, false);
+    }
+    else
+    {
+        retval = entry;
+    }
+
+    PG_RETURN_POINTER(retval);
+}
+
+/*
+ *
+ * versioned_int's gist penalty function
+ *
+ */
+Datum versioned_int_penalty(PG_FUNCTION_ARGS)
+{
+    GISTENTRY *origentry = (GISTENTRY *)PG_GETARG_POINTER(0);
+    GISTENTRY *newentry = (GISTENTRY *)PG_GETARG_POINTER(1);
+    float *penalty = (float *)PG_GETARG_POINTER(2);
+    verint_rect *origrect = (verint_rect *)DatumGetPointer(origentry->key);
+    verint_rect *newrect = (verint_rect *)DatumGetPointer(newentry->key);
+
+    float8 extra = 0;
+
+    if (newrect->lower_tzbound < origrect->lower_tzbound)
+        extra += (float8)(origrect->lower_tzbound - newrect->lower_tzbound);
+
+    if (newrect->upper_tzbound > origrect->upper_tzbound)
+        extra += (float8)(newrect->upper_tzbound - origrect->upper_tzbound);
+
+    if (newrect->lower_val < origrect->lower_val)
+        extra += (float8)(origrect->lower_val - newrect->lower_val);
+
+    if (newrect->upper_val > origrect->upper_val)
+        extra += (float8)(newrect->upper_val - origrect->upper_val);
+
+    *penalty = (float)extra;
+    PG_RETURN_POINTER(penalty);
+}
+
+/*
+ *
+ * versioned_int's gist same function
+ *
+ */
+Datum versioned_int_same(PG_FUNCTION_ARGS)
+{
+    verint_rect *r1 = (verint_rect *)PG_GETARG_POINTER(0);
+    verint_rect *r2 = (verint_rect *)PG_GETARG_POINTER(1);
+    bool *result = (bool *)PG_GETARG_POINTER(2);
+
+    *result = (r1->lower_tzbound == r2->lower_tzbound) &&
+              (r1->upper_tzbound == r2->upper_tzbound) &&
+              (r1->lower_val == r2->lower_val) &&
+              (r1->upper_val == r2->upper_val);
+
+    // fancy
+    // *result = (memcmp(r1, r2, sizeof(verint_rect)) == 0)
+
+    PG_RETURN_POINTER(result);
+}
+
+/*
+ *
+ * versioned_int's gist picksplit function
+ *
+ */
+static inline float8 get_area(const verint_rect *r)
+{
+    return (float8)(r->upper_tzbound - r->lower_tzbound) *
+           (float8)(r->upper_val - r->lower_val);
+}
+
+static inline float8 get_union_area(const verint_rect *r1, const verint_rect *r2)
+{
+    TimestampTz lo_t = Min(r1->lower_tzbound, r2->lower_tzbound);
+    TimestampTz hi_t = Max(r1->upper_tzbound, r2->upper_tzbound);
+    int64 lo_v = Min(r1->lower_val, r2->lower_val);
+    int64 hi_v = Max(r1->upper_val, r2->upper_val);
+
+    return (float8)(hi_t - lo_t) * (float8)(hi_v - lo_v);
+}
+
+static inline void get_union_rect(const verint_rect *r1, const verint_rect *r2, verint_rect *dst)
+{
+    dst->lower_tzbound = Min(r1->lower_tzbound, r2->lower_tzbound);
+    dst->upper_tzbound = Max(r1->upper_tzbound, r2->upper_tzbound);
+    dst->lower_val = Min(r1->lower_val, r2->lower_val);
+    dst->upper_val = Max(r1->upper_val, r2->upper_val);
+}
+
+Datum versioned_int_picksplit(PG_FUNCTION_ARGS)
+{
+    GistEntryVector *entryvec = (GistEntryVector *)PG_GETARG_POINTER(0);
+    GIST_SPLITVEC *v = (GIST_SPLITVEC *)PG_GETARG_POINTER(1);
+
+    OffsetNumber maxoff = entryvec->n - 1;
+    OffsetNumber i, j;
+    int nbytes;
+    verint_rect *unionL, *unionR, *r, tmpL, tmpR;
+    float8 enlargementL, enlargementR;
+
+    int seed1 = -1, seed2 = -1;
+    float8 worst_waste = -1;
+
+    for (i = FirstOffsetNumber; i < maxoff; i = OffsetNumberNext(i))
+    {
+        verint_rect *r1 = (verint_rect *)DatumGetPointer(entryvec->vector[i].key);
+        for (j = OffsetNumberNext(i); j <= maxoff; j = OffsetNumberNext(j))
+        {
+            verint_rect *r2 = (verint_rect *)DatumGetPointer(entryvec->vector[j].key);
+
+            float8 area1 = get_area(r1);
+            float8 area2 = get_area(r2);
+            float8 union_area = get_union_area(r1, r2);
+            float8 waste = union_area - area1 - area2;
+
+            if (waste > worst_waste)
+            {
+                worst_waste = waste;
+                seed1 = i;
+                seed2 = j;
+            }
+        }
+    }
+
+    nbytes = (maxoff + 1) * sizeof(OffsetNumber);
+    v->spl_left = (OffsetNumber *)palloc(nbytes);
+    v->spl_right = (OffsetNumber *)palloc(nbytes);
+    v->spl_nleft = v->spl_nright = 0;
+
+    unionL = (verint_rect *)palloc(sizeof(verint_rect));
+    unionR = (verint_rect *)palloc(sizeof(verint_rect));
+    *unionL = *(verint_rect *)DatumGetPointer(entryvec->vector[seed1].key);
+    *unionR = *(verint_rect *)DatumGetPointer(entryvec->vector[seed2].key);
+
+    v->spl_left[v->spl_nleft++] = seed1;
+    v->spl_right[v->spl_nright++] = seed2;
+
+    for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
+    {
+        if (i == seed1 || i == seed2)
+            continue;
+
+        r = (verint_rect *)DatumGetPointer(entryvec->vector[i].key);
+
+        tmpL = *unionL;
+        tmpR = *unionR;
+        get_union_rect(unionL, r, &tmpL);
+        get_union_rect(unionR, r, &tmpR);
+
+        enlargementL = get_area(&tmpL) - get_area(unionL);
+        enlargementR = get_area(&tmpR) - get_area(unionR);
+
+        if (enlargementL < enlargementR ||
+            (enlargementL == enlargementR && get_area(unionL) < get_area(unionR)))
+        {
+            v->spl_left[v->spl_nleft++] = i;
+            *unionL = tmpL;
+        }
+        else
+        {
+            v->spl_right[v->spl_nright++] = i;
+            *unionR = tmpR;
+        }
+    }
+
+    v->spl_ldatum = PointerGetDatum(unionL);
+    v->spl_rdatum = PointerGetDatum(unionR);
+
+    PG_RETURN_POINTER(v);
+}
+
+/*
+ *
+ * Some Btree index method functions so that versioned_int could use
+ * ORDER BY, DISTINCT etc.
+ *
+ */
+static int versioned_int_cmp_internal(VersionedInt *a, VersionedInt *b)
+{
+    int64 av = a->entries[a->count - 1].value;
+    int64 bv = b->entries[b->count - 1].value;
+
+    if (av < bv)
+    {
+        return -1;
+    }
+    if (av > bv)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+Datum versioned_int_btree_cmp(PG_FUNCTION_ARGS)
+{
+    VersionedInt *a = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+    VersionedInt *b = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
+
+    PG_RETURN_INT32(versioned_int_cmp_internal(a, b));
+}
+
+static VersionedInt *make_versioned_int(int64 newValue, TimestampTz time, int32 typmod)
+{
+    int32 len;
+    char ch;
+    VersionedInt *versionedInt;
+
+    len = typmod & LEN_MASK;
+    ch = (typmod >> MODIFIER_CHARSHIFT) & 0xFF;
+
+    versionedInt = (VersionedInt *)palloc0(sizeof(VersionedInt) + sizeof(VersionedIntEntry));
+    SET_VARSIZE(versionedInt, sizeof(VersionedInt) + sizeof(VersionedIntEntry));
+
+    if (typmod == -1)
+    {
+        elog(NOTICE, "TYPMODE = -1");
+        versionedInt->max_cap = INT32_MAX;
+        versionedInt->valid = -1;
+    }
+    if (ch == 'N')
+    {
+        elog(NOTICE, "ch = N, len = %d", len);
+        versionedInt->max_cap = len;
+        versionedInt->valid = -1;
+    }
+    else if (ch == 'D')
+    {
+        elog(NOTICE, "ch = D, len = %d", len);
+        versionedInt->max_cap = INT32_MAX;
+        versionedInt->valid = (int64)len * 24 * 60 * 60 * 1000000;
+    }
+
+    versionedInt->cap = 1;
+    versionedInt->count = 1;
+    versionedInt->entries[0].value = newValue;
+    versionedInt->entries[0].time = time;
+
+    return versionedInt;
+}
+
+static VersionedInt *update_versioned_int_with_N_retention(VersionedInt *versionedInt, int64 newValue, TimestampTz time)
+{
+    Size size;
+    VersionedInt *newVersionedInt = NULL;
+    if (versionedInt->count == versionedInt->cap && versionedInt->cap < versionedInt->max_cap)
+    {
+        size = sizeof(VersionedInt) + Min(2 * versionedInt->cap, versionedInt->max_cap) * sizeof(VersionedIntEntry);
+        if (size >= (Size)MAX_VERSIONED_INT_SIZE)
+        {
+            ereport(ERROR,
+                    (errcode(ERRCODE_OUT_OF_MEMORY)),
+                    errmsg("Extending column would push it pass the size of 512MB. Aborting"));
+        }
+        newVersionedInt = (VersionedInt *)palloc0(size);
+        SET_VARSIZE(newVersionedInt, size);
+        newVersionedInt->cap = Min(2 * versionedInt->cap, versionedInt->max_cap);
+        newVersionedInt->count = versionedInt->count;
+        newVersionedInt->max_cap = versionedInt->max_cap;
+        memcpy(newVersionedInt->entries, versionedInt->entries, versionedInt->count * sizeof(VersionedIntEntry));
+    }
+    else if (versionedInt->count == versionedInt->cap && versionedInt->cap == versionedInt->max_cap)
+    {
+        size = sizeof(VersionedInt) + versionedInt->cap * sizeof(VersionedIntEntry);
+        newVersionedInt = (VersionedInt *)palloc0(size);
+        SET_VARSIZE(newVersionedInt, size);
+        newVersionedInt->cap = versionedInt->cap;
+        newVersionedInt->count = versionedInt->count - 1;
+        newVersionedInt->max_cap = versionedInt->max_cap;
+        memcpy(newVersionedInt->entries, &versionedInt->entries[1], (versionedInt->count - 1) * sizeof(VersionedIntEntry));
+    }
+    else
+    {
+        size = sizeof(VersionedInt) + versionedInt->cap * sizeof(VersionedIntEntry);
+        newVersionedInt = (VersionedInt *)palloc0(size);
+        SET_VARSIZE(newVersionedInt, size);
+        newVersionedInt->cap = versionedInt->cap;
+        newVersionedInt->count = versionedInt->count;
+        newVersionedInt->max_cap = versionedInt->max_cap;
+        memcpy(newVersionedInt->entries, versionedInt->entries, versionedInt->count * sizeof(VersionedIntEntry));
+    }
+    newVersionedInt->entries[newVersionedInt->count].value = newValue;
+    newVersionedInt->entries[newVersionedInt->count].time = time;
+    newVersionedInt->count += 1;
+
+    return newVersionedInt;
+}
+
+static VersionedInt *update_versioned_int_with_Time_retention(VersionedInt *versionedInt, int64 newValue, TimestampTz time)
+{
+    return NULL;
+}
+
+/*
+ *
+ * Helper function that given versioned_int and timestamp returns
+ * versioned_ints value at that time or null if it didn't exist at
+ * said time
+ *
+ */
+static VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp)
+{
+    VersionedIntEntry *entries = versionedInt->entries;
+    int32 l = 0;
+    int32 r = versionedInt->count - 1;
+    int32 mid;
+
+    if (versionedInt->count == 0)
+    {
+        return NULL;
+    }
+    if (timestamp >= entries[versionedInt->count - 1].time)
+    {
+        return &entries[versionedInt->count - 1];
+    }
+
+    while (l <= r)
+    {
+        mid = l + (r - l) / 2;
+
+        if (entries[mid].time == timestamp)
+        {
+            return &entries[mid];
+        }
+        else if (entries[mid].time < timestamp)
+        {
+            l = mid + 1;
+        }
+        else
+        {
+            r = mid - 1;
+        }
+    }
+
+    if (r >= 0)
+    {
+        return &entries[r];
+    }
+
+    return NULL;
+}
+
+static VerintMinMax get_versioned_ints_min_max(VersionedInt *verint)
+{
+    VerintMinMax ret = {INT64_MAX, INT64_MIN};
+    int i;
+    for (i = 0; i < verint->count; i++)
+    {
+        ret.verint_max = Max(verint->entries[i].value, ret.verint_max);
+        ret.verint_min = Min(verint->entries[i].value, ret.verint_min);
+    }
+
+    return ret;
 }
 
 /*
@@ -623,369 +1064,4 @@ Datum versioned_int_le_versioned_int(PG_FUNCTION_ARGS)
 
     PG_RETURN_BOOL(a->entries[a->count - 1].value <=
                    b->entries[b->count - 1].value);
-}
-
-/*
- *
- * GIST INDEX METHOD SUPPORT FOR VERSIONED_INT
- *
- */
-
-/*
- *
- * This struct represents node of Gist index. It is essentially
- * bounding box (rectangle) whose dimensions are time and value
- *
- */
-
-typedef struct
-{
-    TimestampTz lower_tzbound;
-    TimestampTz upper_tzbound;
-    int64 lower_val;
-    int64 upper_val;
-} verint_rect;
-
-PG_FUNCTION_INFO_V1(verint_rect_in);
-Datum verint_rect_in(PG_FUNCTION_ARGS)
-{
-    ereport(ERROR,
-            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED)),
-            errmsg("Conversion between text representation and verint_rect is not possible"));
-}
-
-PG_FUNCTION_INFO_V1(verint_rect_out);
-Datum verint_rect_out(PG_FUNCTION_ARGS)
-{
-    verint_rect *rect = (verint_rect *)PG_GETARG_POINTER(0);
-
-    const char *lower_ts_str = timestamptz_to_str(rect->lower_tzbound);
-
-    const char *upper_ts_str = timestamptz_to_str(rect->upper_tzbound);
-
-    char *result = psprintf("(%s,%s,%lld,%lld)",
-                            lower_ts_str,
-                            upper_ts_str,
-                            (long long)rect->lower_val,
-                            (long long)rect->upper_val);
-
-    PG_RETURN_CSTRING(result);
-}
-
-/*
- *
- * versioned_int's gist consistency function
- *
- */
-PG_FUNCTION_INFO_V1(versioned_int_consistent);
-Datum versioned_int_consistent(PG_FUNCTION_ARGS)
-{
-    bool isNull;
-    Datum valueDatum, time_at_datum;
-    int64 value;
-    TimestampTz time_at;
-    GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
-    Datum query_datum = PG_GETARG_DATUM(1);
-    bool *recheck = (bool *)PG_GETARG_POINTER(4);
-    verint_rect *key = (verint_rect *)DatumGetPointer(entry->key);
-
-    HeapTupleHeader t = DatumGetHeapTupleHeader(query_datum);
-
-    time_at_datum = GetAttributeByName(t, "ts", &isNull);
-    if (isNull)
-    {
-        ereport(ERROR, (errmsg("ts cannot be NULL")));
-    }
-    valueDatum = GetAttributeByName(t, "value", &isNull);
-    if (isNull)
-    {
-        ereport(ERROR, (errmsg("value cannot be NULL")));
-    }
-
-    value = DatumGetInt64(valueDatum);
-    time_at = DatumGetTimestampTz(time_at_datum);
-
-    if (key->lower_tzbound <= time_at &&
-        time_at <= key->upper_tzbound &&
-        key->lower_val <= value &&
-        value <= key->upper_val)
-    {
-        if (GIST_LEAF(entry))
-        {
-            *recheck = true;
-            PG_RETURN_BOOL(true);
-        }
-        else
-        {
-            *recheck = false;
-            PG_RETURN_BOOL(true);
-        }
-    }
-    *recheck = false;
-    PG_RETURN_BOOL(false);
-}
-
-/*
- *
- * versioned_int's gist union function
- *
- */
-PG_FUNCTION_INFO_V1(versioned_int_union);
-Datum versioned_int_union(PG_FUNCTION_ARGS)
-{
-    int i;
-    verint_rect *nodeentry;
-    GistEntryVector *entryvec = (GistEntryVector *)PG_GETARG_POINTER(0);
-    GISTENTRY *ent = entryvec->vector;
-    int n = entryvec->n;
-    verint_rect *ret = (verint_rect *)palloc0(sizeof(verint_rect));
-
-    ret->lower_tzbound = PG_INT64_MAX;
-    ret->upper_tzbound = PG_INT64_MIN;
-    ret->lower_val = PG_INT64_MAX;
-    ret->upper_val = PG_INT64_MIN;
-
-    for (i = 0; i < n; i++)
-    {
-        nodeentry = (verint_rect *)DatumGetPointer(ent[i].key);
-        ret->lower_tzbound = Min(ret->lower_tzbound, nodeentry->lower_tzbound);
-        ret->upper_tzbound = Max(ret->upper_tzbound, nodeentry->upper_tzbound);
-        ret->lower_val = Min(ret->lower_val, nodeentry->lower_val);
-        ret->upper_val = Max(ret->upper_val, nodeentry->upper_val);
-    }
-
-    PG_RETURN_POINTER(ret);
-}
-
-/*
- *
- * versioned_int's gist compress function
- *
- */
-PG_FUNCTION_INFO_V1(versioned_int_compress);
-Datum versioned_int_compress(PG_FUNCTION_ARGS)
-{
-    GISTENTRY *retval;
-    verint_rect *rect;
-    VersionedInt *verint;
-    GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
-
-    if (entry->leafkey)
-    {
-        rect = (verint_rect *)palloc(sizeof(verint_rect));
-        verint = (VersionedInt *)PG_DETOAST_DATUM(DatumGetPointer(entry->key));
-
-        rect->lower_tzbound = verint->entries[0].time;
-        rect->upper_tzbound = PG_INT64_MAX - 1;
-        rect->lower_val = verint->min_val;
-        rect->upper_val = verint->max_val;
-
-        retval = palloc(sizeof(GISTENTRY));
-        gistentryinit(*retval, PointerGetDatum(rect), entry->rel, entry->page, entry->offset, false);
-    }
-    else
-    {
-        retval = entry;
-    }
-
-    PG_RETURN_POINTER(retval);
-}
-
-/*
- *
- * versioned_int's gist penalty function
- *
- */
-PG_FUNCTION_INFO_V1(versioned_int_penalty);
-Datum versioned_int_penalty(PG_FUNCTION_ARGS)
-{
-    GISTENTRY *origentry = (GISTENTRY *)PG_GETARG_POINTER(0);
-    GISTENTRY *newentry = (GISTENTRY *)PG_GETARG_POINTER(1);
-    float *penalty = (float *)PG_GETARG_POINTER(2);
-    verint_rect *origrect = (verint_rect *)DatumGetPointer(origentry->key);
-    verint_rect *newrect = (verint_rect *)DatumGetPointer(newentry->key);
-
-    float8 extra = 0;
-
-    if (newrect->lower_tzbound < origrect->lower_tzbound)
-        extra += (float8)(origrect->lower_tzbound - newrect->lower_tzbound);
-
-    if (newrect->upper_tzbound > origrect->upper_tzbound)
-        extra += (float8)(newrect->upper_tzbound - origrect->upper_tzbound);
-
-    if (newrect->lower_val < origrect->lower_val)
-        extra += (float8)(origrect->lower_val - newrect->lower_val);
-
-    if (newrect->upper_val > origrect->upper_val)
-        extra += (float8)(newrect->upper_val - origrect->upper_val);
-
-    *penalty = (float)extra;
-    PG_RETURN_POINTER(penalty);
-}
-
-/*
- *
- * versioned_int's gist same function
- *
- */
-PG_FUNCTION_INFO_V1(versioned_int_same);
-Datum versioned_int_same(PG_FUNCTION_ARGS)
-{
-    verint_rect *r1 = (verint_rect *)PG_GETARG_POINTER(0);
-    verint_rect *r2 = (verint_rect *)PG_GETARG_POINTER(1);
-    bool *result = (bool *)PG_GETARG_POINTER(2);
-
-    *result = (r1->lower_tzbound == r2->lower_tzbound) &&
-              (r1->upper_tzbound == r2->upper_tzbound) &&
-              (r1->lower_val == r2->lower_val) &&
-              (r1->upper_val == r2->upper_val);
-
-    // fancy
-    // *result = (memcmp(r1, r2, sizeof(verint_rect)) == 0)
-
-    PG_RETURN_POINTER(result);
-}
-
-/*
- *
- * versioned_int's gist picksplit function
- *
- */
-static inline float8 get_area(const verint_rect *r)
-{
-    return (float8)(r->upper_tzbound - r->lower_tzbound) *
-           (float8)(r->upper_val - r->lower_val);
-}
-
-static inline float8 get_union_area(const verint_rect *r1, const verint_rect *r2)
-{
-    TimestampTz lo_t = Min(r1->lower_tzbound, r2->lower_tzbound);
-    TimestampTz hi_t = Max(r1->upper_tzbound, r2->upper_tzbound);
-    int64 lo_v = Min(r1->lower_val, r2->lower_val);
-    int64 hi_v = Max(r1->upper_val, r2->upper_val);
-
-    return (float8)(hi_t - lo_t) * (float8)(hi_v - lo_v);
-}
-
-static inline void get_union_rect(const verint_rect *r1, const verint_rect *r2, verint_rect *dst)
-{
-    dst->lower_tzbound = Min(r1->lower_tzbound, r2->lower_tzbound);
-    dst->upper_tzbound = Max(r1->upper_tzbound, r2->upper_tzbound);
-    dst->lower_val = Min(r1->lower_val, r2->lower_val);
-    dst->upper_val = Max(r1->upper_val, r2->upper_val);
-}
-
-PG_FUNCTION_INFO_V1(versioned_int_picksplit);
-Datum versioned_int_picksplit(PG_FUNCTION_ARGS)
-{
-    GistEntryVector *entryvec = (GistEntryVector *)PG_GETARG_POINTER(0);
-    GIST_SPLITVEC *v = (GIST_SPLITVEC *)PG_GETARG_POINTER(1);
-
-    OffsetNumber maxoff = entryvec->n - 1;
-    OffsetNumber i, j;
-    int nbytes;
-    verint_rect *unionL, *unionR, *r, tmpL, tmpR;
-    float8 enlargementL, enlargementR;
-
-    int seed1 = -1, seed2 = -1;
-    float8 worst_waste = -1;
-
-    for (i = FirstOffsetNumber; i < maxoff; i = OffsetNumberNext(i))
-    {
-        verint_rect *r1 = (verint_rect *)DatumGetPointer(entryvec->vector[i].key);
-        for (j = OffsetNumberNext(i); j <= maxoff; j = OffsetNumberNext(j))
-        {
-            verint_rect *r2 = (verint_rect *)DatumGetPointer(entryvec->vector[j].key);
-
-            float8 area1 = get_area(r1);
-            float8 area2 = get_area(r2);
-            float8 union_area = get_union_area(r1, r2);
-            float8 waste = union_area - area1 - area2;
-
-            if (waste > worst_waste)
-            {
-                worst_waste = waste;
-                seed1 = i;
-                seed2 = j;
-            }
-        }
-    }
-
-    nbytes = (maxoff + 1) * sizeof(OffsetNumber);
-    v->spl_left = (OffsetNumber *)palloc(nbytes);
-    v->spl_right = (OffsetNumber *)palloc(nbytes);
-    v->spl_nleft = v->spl_nright = 0;
-
-    unionL = (verint_rect *)palloc(sizeof(verint_rect));
-    unionR = (verint_rect *)palloc(sizeof(verint_rect));
-    *unionL = *(verint_rect *)DatumGetPointer(entryvec->vector[seed1].key);
-    *unionR = *(verint_rect *)DatumGetPointer(entryvec->vector[seed2].key);
-
-    v->spl_left[v->spl_nleft++] = seed1;
-    v->spl_right[v->spl_nright++] = seed2;
-
-    for (i = FirstOffsetNumber; i <= maxoff; i = OffsetNumberNext(i))
-    {
-        if (i == seed1 || i == seed2)
-            continue;
-
-        r = (verint_rect *)DatumGetPointer(entryvec->vector[i].key);
-
-        tmpL = *unionL;
-        tmpR = *unionR;
-        get_union_rect(unionL, r, &tmpL);
-        get_union_rect(unionR, r, &tmpR);
-
-        enlargementL = get_area(&tmpL) - get_area(unionL);
-        enlargementR = get_area(&tmpR) - get_area(unionR);
-
-        if (enlargementL < enlargementR ||
-            (enlargementL == enlargementR && get_area(unionL) < get_area(unionR)))
-        {
-            v->spl_left[v->spl_nleft++] = i;
-            *unionL = tmpL;
-        }
-        else
-        {
-            v->spl_right[v->spl_nright++] = i;
-            *unionR = tmpR;
-        }
-    }
-
-    v->spl_ldatum = PointerGetDatum(unionL);
-    v->spl_rdatum = PointerGetDatum(unionR);
-
-    PG_RETURN_POINTER(v);
-}
-
-/*
- *
- * Some Btree index method functions so that versioned_int could use
- * ORDER BY, DISTINCT etc.
- *
- */
-static int versioned_int_cmp_internal(VersionedInt *a, VersionedInt *b)
-{
-    int64 av = a->entries[a->count - 1].value;
-    int64 bv = b->entries[b->count - 1].value;
-
-    if (av < bv)
-    {
-        return -1;
-    }
-    if (av > bv)
-    {
-        return 1;
-    }
-
-    return 0;
-}
-
-PG_FUNCTION_INFO_V1(versioned_int_btree_cmp);
-Datum versioned_int_btree_cmp(PG_FUNCTION_ARGS)
-{
-    VersionedInt *a = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
-    VersionedInt *b = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(1));
-
-    PG_RETURN_INT32(versioned_int_cmp_internal(a, b));
 }

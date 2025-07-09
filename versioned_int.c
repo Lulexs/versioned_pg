@@ -48,7 +48,7 @@ typedef struct
     int32 v1_len_;
     int32 count;
     int32 cap;
-    int32 max_cap;
+    int32 pad_;
     int64 valid;
     VersionedIntEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } VersionedInt;
@@ -94,6 +94,7 @@ PG_FUNCTION_INFO_V1(make_versioned);
 PG_FUNCTION_INFO_V1(get_history);
 PG_FUNCTION_INFO_V1(versioned_int_at_time);
 PG_FUNCTION_INFO_V1(versioned_int_at_time_eq);
+PG_FUNCTION_INFO_V1(versioned_int_enforce_modifier);
 
 // Gist support
 PG_FUNCTION_INFO_V1(verint_rect_in);
@@ -109,9 +110,8 @@ PG_FUNCTION_INFO_V1(versioned_int_picksplit);
 PG_FUNCTION_INFO_V1(versioned_int_btree_cmp);
 static int versioned_int_cmp_internal(VersionedInt *a, VersionedInt *b);
 
-static VersionedInt *make_versioned_int(int64 newValue, TimestampTz time, int32 typmod);
-static VersionedInt *update_versioned_int_with_N_retention(VersionedInt *versionedInt, int64 newValue, TimestampTz time);
-static VersionedInt *update_versioned_int_with_Time_retention(VersionedInt *versionedInt, int64 newValue, TimestampTz time);
+static VersionedInt *enforce_N_retention(VersionedInt *versionedInt, int32 len);
+static VersionedInt *enforce_Time_retention(VersionedInt *versionedInt, int32 len);
 static VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp);
 static inline float8 get_area(const verint_rect *r);
 static inline float8 get_union_area(const verint_rect *r1, const verint_rect *r2);
@@ -197,22 +197,57 @@ Datum versioned_int_typemod_out(PG_FUNCTION_ARGS)
 
 /*
  *
+ * Function that enforces versioned_ints type modifier. It is used
+ * in implicit cast of versioned_int to versioned_int, and it's the only
+ * way to get hold of type modifier on custom type. Typmod here will never
+ * be -1, because if no typmod specified on column, no cast will be called.
+ *
+ *
+ */
+Datum versioned_int_enforce_modifier(PG_FUNCTION_ARGS)
+{
+    VersionedInt *src = (VersionedInt *)PG_DETOAST_DATUM_COPY(PG_GETARG_DATUM(0));
+    int32 typmod = PG_GETARG_INT32(1);
+    int32 len = typmod & LEN_MASK;
+    char ch = (typmod >> MODIFIER_CHARSHIFT) & 0xFF;
+
+    if (ch == 'N')
+    {
+        src = enforce_N_retention(src, len);
+    }
+    else if (ch == 'D')
+    {
+        src = enforce_Time_retention(src, len);
+    }
+    else
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("unknown retention policy character \"%c\"", ch)));
+    }
+
+    PG_RETURN_POINTER(src);
+}
+
+/*
+ *
  * make_versioned is a function that takes two arguments - versioned_int
  * and new value of that versioned int and adds new value to int's history.
  * is called like
+ * make_versioned(null, new_value)
  * make_versioned(verint, new_value)
  *
  */
 Datum make_versioned(PG_FUNCTION_ARGS)
 {
-    VersionedInt *versionedInt;
+    Size size;
+    VersionedInt *versionedInt = NULL;
     VersionedInt *newVersionedInt = NULL;
     int64 newValue;
     TimestampTz time = GetCurrentTimestamp();
-
     if (!PG_ARGISNULL(0))
     {
-        versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
+        versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
     }
     if (PG_ARGISNULL(1))
     {
@@ -222,14 +257,40 @@ Datum make_versioned(PG_FUNCTION_ARGS)
     }
     newValue = PG_GETARG_INT64(1);
 
-    
-    if (versionedInt->valid == -1)
+    if (versionedInt == NULL)
     {
-        newVersionedInt = update_versioned_int_with_N_retention(versionedInt, newValue, time);
+        versionedInt = (VersionedInt *)palloc0(sizeof(VersionedInt) + sizeof(VersionedIntEntry));
+        SET_VARSIZE(versionedInt, sizeof(VersionedInt) + sizeof(VersionedIntEntry));
+        versionedInt->cap = 1;
+        versionedInt->count = 1;
+        versionedInt->entries[0].value = newValue;
+        versionedInt->entries[0].time = time;
+        newVersionedInt = versionedInt;
     }
     else
     {
-        newVersionedInt = update_versioned_int_with_Time_retention(versionedInt, newValue, time);
+        if (versionedInt->count == versionedInt->cap)
+        {
+            size = sizeof(VersionedInt) + 2 * versionedInt->cap * sizeof(VersionedIntEntry);
+            if (size >= (Size)MAX_VERSIONED_INT_SIZE)
+            {
+                ereport(ERROR,
+                        (errcode(ERRCODE_OUT_OF_MEMORY)),
+                        errmsg("Extending column would push it pass the size of 512MB. Aborting"));
+            }
+        }
+        else
+        {
+            size = sizeof(VersionedInt) + versionedInt->cap * sizeof(VersionedIntEntry);
+        }
+        newVersionedInt = (VersionedInt *)palloc0(size);
+        SET_VARSIZE(newVersionedInt, size);
+        newVersionedInt->cap = 2 * versionedInt->cap;
+        newVersionedInt->count = versionedInt->count;
+        memcpy(newVersionedInt->entries, versionedInt->entries, versionedInt->count * sizeof(VersionedIntEntry));
+        newVersionedInt->entries[newVersionedInt->count].value = newValue;
+        newVersionedInt->entries[newVersionedInt->count].time = time;
+        newVersionedInt->count += 1;
     }
 
     PG_RETURN_POINTER(newVersionedInt);
@@ -713,93 +774,12 @@ Datum versioned_int_btree_cmp(PG_FUNCTION_ARGS)
     PG_RETURN_INT32(versioned_int_cmp_internal(a, b));
 }
 
-static VersionedInt *make_versioned_int(int64 newValue, TimestampTz time, int32 typmod)
+static VersionedInt *enforce_N_retention(VersionedInt *versionedInt, int32 len)
 {
-    int32 len;
-    char ch;
-    VersionedInt *versionedInt;
-
-    len = typmod & LEN_MASK;
-    ch = (typmod >> MODIFIER_CHARSHIFT) & 0xFF;
-
-    versionedInt = (VersionedInt *)palloc0(sizeof(VersionedInt) + sizeof(VersionedIntEntry));
-    SET_VARSIZE(versionedInt, sizeof(VersionedInt) + sizeof(VersionedIntEntry));
-
-    if (typmod == -1)
-    {
-        elog(NOTICE, "TYPMODE = -1");
-        versionedInt->max_cap = INT32_MAX;
-        versionedInt->valid = -1;
-    }
-    if (ch == 'N')
-    {
-        elog(NOTICE, "ch = N, len = %d", len);
-        versionedInt->max_cap = len;
-        versionedInt->valid = -1;
-    }
-    else if (ch == 'D')
-    {
-        elog(NOTICE, "ch = D, len = %d", len);
-        versionedInt->max_cap = INT32_MAX;
-        versionedInt->valid = (int64)len * 24 * 60 * 60 * 1000000;
-    }
-
-    versionedInt->cap = 1;
-    versionedInt->count = 1;
-    versionedInt->entries[0].value = newValue;
-    versionedInt->entries[0].time = time;
-
-    return versionedInt;
+    return NULL;
 }
 
-static VersionedInt *update_versioned_int_with_N_retention(VersionedInt *versionedInt, int64 newValue, TimestampTz time)
-{
-    Size size;
-    VersionedInt *newVersionedInt = NULL;
-    if (versionedInt->count == versionedInt->cap && versionedInt->cap < versionedInt->max_cap)
-    {
-        size = sizeof(VersionedInt) + Min(2 * versionedInt->cap, versionedInt->max_cap) * sizeof(VersionedIntEntry);
-        if (size >= (Size)MAX_VERSIONED_INT_SIZE)
-        {
-            ereport(ERROR,
-                    (errcode(ERRCODE_OUT_OF_MEMORY)),
-                    errmsg("Extending column would push it pass the size of 512MB. Aborting"));
-        }
-        newVersionedInt = (VersionedInt *)palloc0(size);
-        SET_VARSIZE(newVersionedInt, size);
-        newVersionedInt->cap = Min(2 * versionedInt->cap, versionedInt->max_cap);
-        newVersionedInt->count = versionedInt->count;
-        newVersionedInt->max_cap = versionedInt->max_cap;
-        memcpy(newVersionedInt->entries, versionedInt->entries, versionedInt->count * sizeof(VersionedIntEntry));
-    }
-    else if (versionedInt->count == versionedInt->cap && versionedInt->cap == versionedInt->max_cap)
-    {
-        size = sizeof(VersionedInt) + versionedInt->cap * sizeof(VersionedIntEntry);
-        newVersionedInt = (VersionedInt *)palloc0(size);
-        SET_VARSIZE(newVersionedInt, size);
-        newVersionedInt->cap = versionedInt->cap;
-        newVersionedInt->count = versionedInt->count - 1;
-        newVersionedInt->max_cap = versionedInt->max_cap;
-        memcpy(newVersionedInt->entries, &versionedInt->entries[1], (versionedInt->count - 1) * sizeof(VersionedIntEntry));
-    }
-    else
-    {
-        size = sizeof(VersionedInt) + versionedInt->cap * sizeof(VersionedIntEntry);
-        newVersionedInt = (VersionedInt *)palloc0(size);
-        SET_VARSIZE(newVersionedInt, size);
-        newVersionedInt->cap = versionedInt->cap;
-        newVersionedInt->count = versionedInt->count;
-        newVersionedInt->max_cap = versionedInt->max_cap;
-        memcpy(newVersionedInt->entries, versionedInt->entries, versionedInt->count * sizeof(VersionedIntEntry));
-    }
-    newVersionedInt->entries[newVersionedInt->count].value = newValue;
-    newVersionedInt->entries[newVersionedInt->count].time = time;
-    newVersionedInt->count += 1;
-
-    return newVersionedInt;
-}
-
-static VersionedInt *update_versioned_int_with_Time_retention(VersionedInt *versionedInt, int64 newValue, TimestampTz time)
+static VersionedInt *enforce_Time_retention(VersionedInt *versionedInt, int32 len)
 {
     return NULL;
 }

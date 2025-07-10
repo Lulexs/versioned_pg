@@ -121,6 +121,25 @@ static inline float8 get_union_area(const verint_rect *r1, const verint_rect *r2
 static inline void get_union_rect(const verint_rect *r1, const verint_rect *r2, verint_rect *dst);
 static VerintMinMax get_versioned_ints_min_max(VersionedInt *verint);
 
+static void xact_callback(XactEvent event, void *arg);
+static TimestampTz txn_commit_ts = 0;
+
+void _PG_init(void)
+{
+    RegisterXactCallback(xact_callback, NULL);
+}
+
+static void xact_callback(XactEvent event, void *arg)
+{
+    if (event == XACT_EVENT_COMMIT)
+    {
+        txn_commit_ts = GetCurrentTimestamp();
+    }
+    else if (event == XACT_EVENT_ABORT)
+    {
+        txn_commit_ts = 0;
+    }
+}
 /*
  *
  * Input function for versioned_int, i.e. function that turns
@@ -251,7 +270,10 @@ Datum make_versioned(PG_FUNCTION_ARGS)
     VersionedInt *versionedInt = NULL;
     VersionedInt *newVersionedInt = NULL;
     int64 newValue;
-    TimestampTz time = GetCurrentTimestamp();
+    TimestampTz time;
+    if (txn_commit_ts == 0)
+        txn_commit_ts = GetCurrentTimestamp();
+    time = txn_commit_ts;
     if (!PG_ARGISNULL(0))
     {
         versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));

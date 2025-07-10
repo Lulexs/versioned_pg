@@ -121,54 +121,32 @@ static inline float8 get_union_area(const verint_rect *r1, const verint_rect *r2
 static inline void get_union_rect(const verint_rect *r1, const verint_rect *r2, verint_rect *dst);
 static VerintMinMax get_versioned_ints_min_max(VersionedInt *verint);
 
-// typedef struct QueueItem
-// {
-//     VersionedInt *verint;
-//     struct QueueItem *next;
-// } QueueItem;
+static TimestampTz get_first_write_ts();
+static TimestampTz first_write_ts = 0;
+static void xact_callback(XactEvent event, void *arg);
 
-// static QueueItem *queue_start = NULL;
-// static QueueItem *queue_end = NULL;
-// static void xact_callback(XactEvent event, void *arg);
+void _PG_init(void)
+{
+    RegisterXactCallback(xact_callback, NULL);
+}
 
-// void _PG_init(void)
-// {
-//     RegisterXactCallback(xact_callback, NULL);
-// }
+static void xact_callback(XactEvent event, void *arg)
+{
+    if (event == XACT_EVENT_COMMIT)
+    {
+        first_write_ts = 0;
+    }
+}
 
-// static void xact_callback(XactEvent event, void *arg)
-// {
-//     if (event == XACT_EVENT_PRE_COMMIT)
-//     {
-//         QueueItem *tmp;
-//         TimestampTz time = GetCurrentTimestamp();
-//         QueueItem *curr = queue_start;
-//         while (curr != NULL)
-//         {
-//             VersionedInt *verint = curr->verint;
-//             elog(NOTICE, "some verint stuff %d %d", verint->count, verint->cap);
-//             verint->entries[verint->count - 1].time = time;
+static TimestampTz get_first_write_ts()
+{
+    if (first_write_ts == 0)
+    {
+        first_write_ts = GetCurrentTimestamp();
+    }
 
-//             tmp = curr;
-//             curr = curr->next;
-//             pfree(tmp);
-//         }
-//         queue_start = NULL;
-//         queue_end = NULL;
-//     }
-//     else if (event == XACT_EVENT_ABORT)
-//     {
-//         QueueItem *curr = queue_start;
-//         while (curr != NULL)
-//         {
-//             QueueItem *tmp = curr;
-//             curr = curr->next;
-//             pfree(tmp);
-//         }
-//         queue_start = NULL;
-//         queue_end = NULL;
-//     }
-// }
+    return first_write_ts;
+}
 
 /*
  *
@@ -300,7 +278,7 @@ Datum make_versioned(PG_FUNCTION_ARGS)
     VersionedInt *versionedInt = NULL;
     VersionedInt *newVersionedInt = NULL;
     int64 newValue;
-    TimestampTz time = GetCurrentTimestamp();
+    TimestampTz time = get_first_write_ts();
     if (!PG_ARGISNULL(0))
     {
         versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));

@@ -91,6 +91,7 @@ PG_FUNCTION_INFO_V1(versioned_int_out);
 PG_FUNCTION_INFO_V1(versioned_int_typemod_in);
 PG_FUNCTION_INFO_V1(versioned_int_typemod_out);
 PG_FUNCTION_INFO_V1(make_versioned);
+PG_FUNCTION_INFO_V1(make_versioned_with_ts);
 PG_FUNCTION_INFO_V1(get_history);
 PG_FUNCTION_INFO_V1(versioned_int_at_time);
 PG_FUNCTION_INFO_V1(versioned_int_at_time_eq);
@@ -114,6 +115,7 @@ static VersionedInt *enforce_N_retention(VersionedInt *versionedInt, int32 maxCa
 static VersionedInt *enforce_Time_retention(VersionedInt *versionedInt, int64 time);
 static VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp);
 static int32 first_time_greater_than_cutoff(VersionedIntEntry *entries, int32 count, TimestampTz cutoff);
+static int32 get_ts_insert_location(VersionedIntEntry *entries, int32 count, TimestampTz time);
 static inline float8 get_area(const verint_rect *r);
 static inline float8 get_union_area(const verint_rect *r1, const verint_rect *r2);
 static inline void get_union_rect(const verint_rect *r1, const verint_rect *r2, verint_rect *dst);
@@ -176,7 +178,6 @@ Datum versioned_int_typemod_in(PG_FUNCTION_ARGS)
                  errmsg("char modifier must be 'N' or 'D'")));
 
     typmod = (int32)len | ((int32)ch << MODIFIER_CHARSHIFT);
-    elog(NOTICE, "INSIDE typmodin doing %ld %c %d", len, ch, typmod);
     PG_RETURN_INT32(typmod);
 }
 
@@ -216,8 +217,6 @@ Datum versioned_int_enforce_modifier(PG_FUNCTION_ARGS)
     int32 typmod = PG_GETARG_INT32(1);
     int32 len = typmod & LEN_MASK;
     char ch = (typmod >> MODIFIER_CHARSHIFT) & 0xFF;
-
-    elog(NOTICE, "HERE with some shit %d %d %c", typmod, len, ch);
 
     if (ch == 'N')
     {
@@ -299,6 +298,85 @@ Datum make_versioned(PG_FUNCTION_ARGS)
         newVersionedInt->entries[newVersionedInt->count].value = newValue;
         newVersionedInt->entries[newVersionedInt->count].time = time;
         newVersionedInt->count += 1;
+    }
+
+    PG_RETURN_POINTER(newVersionedInt);
+}
+
+/*
+ *
+ * make_versioned_with_ts is a function that takes three arguments - versioned_int,
+ * new value and a timestamp adds new value to int's history.
+ * is called like
+ * make_versioned(NULL, new_value, timestamp)
+ * make_versioned(verint, new_value, timestamp)
+ *
+ */
+Datum make_versioned_with_ts(PG_FUNCTION_ARGS)
+{
+    Size size;
+    VersionedInt *versionedInt = NULL;
+    VersionedInt *newVersionedInt = NULL;
+    int64 newValue;
+    TimestampTz time;
+    int32 idx;
+
+    if (!PG_ARGISNULL(0))
+    {
+        versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    }
+    if (PG_ARGISNULL(1))
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED)),
+                errmsg("Cannot insert \"null\" as the value of versioned_int type"));
+    }
+    if (PG_ARGISNULL(2))
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED)),
+                errmsg("Cannot insert \"null\" as the timestamp of versioned_int type"));
+    }
+
+    newValue = PG_GETARG_INT64(1);
+    time = PG_GETARG_TIMESTAMPTZ(2);
+
+    if (versionedInt == NULL)
+    {
+        versionedInt = (VersionedInt *)palloc0(sizeof(VersionedInt) + sizeof(VersionedIntEntry));
+        SET_VARSIZE(versionedInt, sizeof(VersionedInt) + sizeof(VersionedIntEntry));
+        versionedInt->cap = 1;
+        versionedInt->count = 1;
+        versionedInt->entries[0].value = newValue;
+        versionedInt->entries[0].time = time;
+        newVersionedInt = versionedInt;
+    }
+    else
+    {
+        if (versionedInt->count == versionedInt->cap)
+        {
+            size = sizeof(VersionedInt) + 2 * versionedInt->cap * sizeof(VersionedIntEntry);
+            if (size >= (Size)MAX_VERSIONED_INT_SIZE)
+            {
+                ereport(ERROR,
+                        (errcode(ERRCODE_OUT_OF_MEMORY)),
+                        errmsg("Extending column would push it pass the size of 512MB. Aborting"));
+            }
+        }
+        else
+        {
+            size = sizeof(VersionedInt) + versionedInt->cap * sizeof(VersionedIntEntry);
+        }
+        newVersionedInt = (VersionedInt *)palloc0(size);
+        SET_VARSIZE(newVersionedInt, size);
+        newVersionedInt->cap = 2 * versionedInt->cap;
+        newVersionedInt->count = versionedInt->count + 1;
+        idx = get_ts_insert_location(versionedInt->entries, versionedInt->count, time);
+
+        memcpy(newVersionedInt->entries, versionedInt->entries, idx * sizeof(VersionedIntEntry));
+        memcpy(&newVersionedInt->entries[idx + 1], &versionedInt->entries[idx], (versionedInt->count - idx) * sizeof(VersionedIntEntry));
+        newVersionedInt->entries[idx].value = newValue;
+        newVersionedInt->entries[idx].time = time;
     }
 
     PG_RETURN_POINTER(newVersionedInt);
@@ -785,6 +863,28 @@ Datum versioned_int_btree_cmp(PG_FUNCTION_ARGS)
     VersionedInt *b = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
 
     PG_RETURN_INT32(versioned_int_cmp_internal(a, b));
+}
+
+static int32 get_ts_insert_location(VersionedIntEntry *entries, int32 count, TimestampTz time)
+{
+    int32 l = 0;
+    int32 r = count;
+
+    while (l < r)
+    {
+        int32 mid = l + (r - l) / 2;
+
+        if (entries[mid].time < time)
+        {
+            l = mid + 1;
+        }
+        else
+        {
+            r = mid;
+        }
+    }
+
+    return l;
 }
 
 static VersionedInt *enforce_N_retention(VersionedInt *versionedInt, int32 maxCap)

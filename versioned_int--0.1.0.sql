@@ -15,6 +15,11 @@ CREATE FUNCTION make_versioned(versioned_int, BIGINT)
     AS 'MODULE_PATHNAME'
     LANGUAGE C VOLATILE;
 
+CREATE FUNCTION make_versioned_with_ts(versioned_int, BIGINT, TIMESTAMPTZ)
+    RETURNS versioned_int
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C VOLATILE;
+
 CREATE FUNCTION versioned_int_out(versioned_int)
     RETURNS cstring
     AS 'MODULE_PATHNAME'

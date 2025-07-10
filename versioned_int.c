@@ -8,9 +8,6 @@
 #include "nodes/nodeFuncs.h"
 #include "utils/array.h"
 
-#include <stdio.h>
-#include <stdlib.h>
-
 #define MAX_VERSIONED_INT_SIZE (512 * 1024 * 1024)
 #define VERINT_MODIFIER_MAX_VALUE (1 << 24)
 #define MODIFIER_CHARSHIFT (24)
@@ -339,8 +336,8 @@ Datum make_versioned(PG_FUNCTION_ARGS)
  * make_versioned_with_ts is a function that takes three arguments - versioned_int,
  * new value and a timestamp adds new value to int's history.
  * is called like
- * make_versioned(NULL, new_value, timestamp)
- * make_versioned(verint, new_value, timestamp)
+ * make_versioned_with_ts(NULL, new_value, timestamp)
+ * make_versioned_with_ts(verint, new_value, timestamp)
  *
  */
 Datum make_versioned_with_ts(PG_FUNCTION_ARGS)

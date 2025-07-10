@@ -121,53 +121,54 @@ static inline float8 get_union_area(const verint_rect *r1, const verint_rect *r2
 static inline void get_union_rect(const verint_rect *r1, const verint_rect *r2, verint_rect *dst);
 static VerintMinMax get_versioned_ints_min_max(VersionedInt *verint);
 
-typedef struct QueueItem
-{
-    VersionedInt *verint;
-    struct QueueItem *next;
-} QueueItem;
+// typedef struct QueueItem
+// {
+//     VersionedInt *verint;
+//     struct QueueItem *next;
+// } QueueItem;
 
-static QueueItem *queue_start = NULL;
-static QueueItem *queue_end = NULL;
-static void xact_callback(XactEvent event, void *arg);
+// static QueueItem *queue_start = NULL;
+// static QueueItem *queue_end = NULL;
+// static void xact_callback(XactEvent event, void *arg);
 
-void _PG_init(void)
-{
-    RegisterXactCallback(xact_callback, NULL);
-}
+// void _PG_init(void)
+// {
+//     RegisterXactCallback(xact_callback, NULL);
+// }
 
-static void xact_callback(XactEvent event, void *arg)
-{
-    if (event == XACT_EVENT_PRE_COMMIT)
-    {
-        QueueItem *tmp;
-        TimestampTz time = GetCurrentTimestamp();
-        QueueItem *curr = queue_start;
-        while (curr != NULL)
-        {
-            VersionedInt *verint = curr->verint;
-            verint->entries[verint->count - 1].time = time;
+// static void xact_callback(XactEvent event, void *arg)
+// {
+//     if (event == XACT_EVENT_PRE_COMMIT)
+//     {
+//         QueueItem *tmp;
+//         TimestampTz time = GetCurrentTimestamp();
+//         QueueItem *curr = queue_start;
+//         while (curr != NULL)
+//         {
+//             VersionedInt *verint = curr->verint;
+//             elog(NOTICE, "some verint stuff %d %d", verint->count, verint->cap);
+//             verint->entries[verint->count - 1].time = time;
 
-            tmp = curr;
-            curr = curr->next;
-            pfree(tmp);
-        }
-        queue_start = NULL;
-        queue_end = NULL;
-    }
-    else if (event == XACT_EVENT_ABORT)
-    {
-        QueueItem *curr = queue_start;
-        while (curr != NULL)
-        {
-            QueueItem *tmp = curr;
-            curr = curr->next;
-            pfree(tmp);
-        }
-        queue_start = NULL;
-        queue_end = NULL;
-    }
-}
+//             tmp = curr;
+//             curr = curr->next;
+//             pfree(tmp);
+//         }
+//         queue_start = NULL;
+//         queue_end = NULL;
+//     }
+//     else if (event == XACT_EVENT_ABORT)
+//     {
+//         QueueItem *curr = queue_start;
+//         while (curr != NULL)
+//         {
+//             QueueItem *tmp = curr;
+//             curr = curr->next;
+//             pfree(tmp);
+//         }
+//         queue_start = NULL;
+//         queue_end = NULL;
+//     }
+// }
 
 /*
  *
@@ -299,8 +300,7 @@ Datum make_versioned(PG_FUNCTION_ARGS)
     VersionedInt *versionedInt = NULL;
     VersionedInt *newVersionedInt = NULL;
     int64 newValue;
-    QueueItem *item;
-    // TimestampTz time = GetCurrentTimestamp();
+    TimestampTz time = GetCurrentTimestamp();
     if (!PG_ARGISNULL(0))
     {
         versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
@@ -320,7 +320,7 @@ Datum make_versioned(PG_FUNCTION_ARGS)
         versionedInt->cap = 1;
         versionedInt->count = 1;
         versionedInt->entries[0].value = newValue;
-        versionedInt->entries[0].time = 0;
+        versionedInt->entries[0].time = time;
         newVersionedInt = versionedInt;
     }
     else
@@ -334,35 +334,25 @@ Datum make_versioned(PG_FUNCTION_ARGS)
                         (errcode(ERRCODE_OUT_OF_MEMORY)),
                         errmsg("Extending column would push it pass the size of 512MB. Aborting"));
             }
+            newVersionedInt = (VersionedInt *)palloc0(size);
+            SET_VARSIZE(newVersionedInt, size);
+            newVersionedInt->cap = 2 * versionedInt->cap;
         }
         else
         {
             size = sizeof(VersionedInt) + versionedInt->cap * sizeof(VersionedIntEntry);
+            newVersionedInt = (VersionedInt *)palloc0(size);
+            SET_VARSIZE(newVersionedInt, size);
+            newVersionedInt->cap = versionedInt->cap;
         }
-        newVersionedInt = (VersionedInt *)palloc0(size);
-        SET_VARSIZE(newVersionedInt, size);
-        newVersionedInt->cap = 2 * versionedInt->cap;
+
         newVersionedInt->count = versionedInt->count;
         memcpy(newVersionedInt->entries, versionedInt->entries, versionedInt->count * sizeof(VersionedIntEntry));
         newVersionedInt->entries[newVersionedInt->count].value = newValue;
-        newVersionedInt->entries[newVersionedInt->count].time = 0;
+        newVersionedInt->entries[newVersionedInt->count].time = time;
         newVersionedInt->count += 1;
     }
 
-    item = (QueueItem *)palloc(sizeof(QueueItem));
-    item->verint = newVersionedInt;
-    item->next = NULL;
-
-    if (queue_start == NULL)
-    {
-        queue_start = item;
-        queue_end = item;
-    }
-    else
-    {
-        queue_end->next = item;
-        queue_end = item;
-    }
     PG_RETURN_POINTER(newVersionedInt);
 }
 
@@ -425,14 +415,18 @@ Datum make_versioned_with_ts(PG_FUNCTION_ARGS)
                         (errcode(ERRCODE_OUT_OF_MEMORY)),
                         errmsg("Extending column would push it pass the size of 512MB. Aborting"));
             }
+            newVersionedInt = (VersionedInt *)palloc0(size);
+            SET_VARSIZE(newVersionedInt, size);
+            newVersionedInt->cap = 2 * versionedInt->cap;
         }
         else
         {
             size = sizeof(VersionedInt) + versionedInt->cap * sizeof(VersionedIntEntry);
+            newVersionedInt = (VersionedInt *)palloc0(size);
+            SET_VARSIZE(newVersionedInt, size);
+            newVersionedInt->cap = versionedInt->cap;
         }
-        newVersionedInt = (VersionedInt *)palloc0(size);
-        SET_VARSIZE(newVersionedInt, size);
-        newVersionedInt->cap = 2 * versionedInt->cap;
+
         newVersionedInt->count = versionedInt->count + 1;
         idx = get_ts_insert_location(versionedInt->entries, versionedInt->count, time);
 
@@ -579,10 +573,12 @@ Datum versioned_int_out(PG_FUNCTION_ARGS)
 
     if (versionedInt->count == 0)
     {
-        PG_RETURN_NULL();
+        result = psprintf("NULL");
     }
-
-    result = psprintf("%ld", versionedInt->entries[versionedInt->count - 1].value);
+    else
+    {
+        result = psprintf("%ld", versionedInt->entries[versionedInt->count - 1].value);
+    }
     PG_RETURN_CSTRING(result);
 }
 

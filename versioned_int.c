@@ -111,8 +111,9 @@ PG_FUNCTION_INFO_V1(versioned_int_btree_cmp);
 static int versioned_int_cmp_internal(VersionedInt *a, VersionedInt *b);
 
 static VersionedInt *enforce_N_retention(VersionedInt *versionedInt, int32 maxCap);
-static VersionedInt *enforce_Time_retention(VersionedInt *versionedInt, int32 len);
+static VersionedInt *enforce_Time_retention(VersionedInt *versionedInt, int64 time);
 static VersionedIntEntry *get_versioned_ints_value_at_time(VersionedInt *versionedInt, TimestampTz timestamp);
+static int32 first_time_greater_than_cutoff(VersionedIntEntry *entries, int32 count, TimestampTz cutoff);
 static inline float8 get_area(const verint_rect *r);
 static inline float8 get_union_area(const verint_rect *r1, const verint_rect *r2);
 static inline void get_union_rect(const verint_rect *r1, const verint_rect *r2, verint_rect *dst);
@@ -169,6 +170,11 @@ Datum versioned_int_typemod_in(PG_FUNCTION_ARGS)
                  errmsg("char modifier must be exactly one character")));
     ch = cstr[0];
 
+    if (ch != 'N' && ch != 'D')
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("char modifier must be 'N' or 'D'")));
+
     typmod = (int32)len | ((int32)ch << MODIFIER_CHARSHIFT);
     elog(NOTICE, "INSIDE typmodin doing %ld %c %d", len, ch, typmod);
     PG_RETURN_INT32(typmod);
@@ -219,7 +225,7 @@ Datum versioned_int_enforce_modifier(PG_FUNCTION_ARGS)
     }
     else if (ch == 'D')
     {
-        src = enforce_Time_retention(src, len);
+        src = enforce_Time_retention(src, (int64)len * 24 * 60 * 60 * 1000000);
     }
     else
     {
@@ -429,6 +435,11 @@ Datum versioned_int_out(PG_FUNCTION_ARGS)
 {
     VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
     char *result;
+
+    if (versionedInt->count == 0)
+    {
+        PG_RETURN_NULL();
+    }
 
     result = psprintf("%ld", versionedInt->entries[versionedInt->count - 1].value);
     PG_RETURN_CSTRING(result);
@@ -796,9 +807,49 @@ static VersionedInt *enforce_N_retention(VersionedInt *versionedInt, int32 maxCa
     return newVerint;
 }
 
-static VersionedInt *enforce_Time_retention(VersionedInt *versionedInt, int32 len)
+static int32 first_time_greater_than_cutoff(VersionedIntEntry *entries, int32 count, TimestampTz cutoff)
 {
-    return NULL;
+    int32 l = 0;
+    int32 r = count - 1;
+    int32 result = count;
+
+    while (l <= r)
+    {
+        int32 mid = l + (r - l) / 2;
+        if (entries[mid].time > cutoff)
+        {
+            result = mid;
+            r = mid - 1;
+        }
+        else
+        {
+            l = mid + 1;
+        }
+    }
+
+    return result;
+}
+
+static VersionedInt *enforce_Time_retention(VersionedInt *versionedInt, int64 time)
+{
+    TimestampTz cutoffTime = GetCurrentTimestamp() - time;
+    int32 idx = first_time_greater_than_cutoff(versionedInt->entries, versionedInt->count, cutoffTime);
+    int32 newCount;
+    VersionedInt *newVerint;
+
+    if (idx == 0)
+        return versionedInt;
+
+    newCount = versionedInt->count - idx;
+
+    newVerint = (VersionedInt *)palloc0(sizeof(VersionedInt) + newCount * sizeof(VersionedIntEntry));
+    SET_VARSIZE(newVerint, sizeof(VersionedInt) + newCount * sizeof(VersionedIntEntry));
+    newVerint->cap = newCount;
+    newVerint->count = newCount;
+
+    memcpy(newVerint->entries, &versionedInt->entries[idx], newCount * sizeof(VersionedIntEntry));
+
+    return newVerint;
 }
 
 /*

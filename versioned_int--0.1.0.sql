@@ -181,6 +181,66 @@ RETURNS boolean
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
+CREATE FUNCTION versioned_int_add_bigint(versioned_int, bigint)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_sub_bigint(versioned_int, bigint)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_mul_bigint(versioned_int, bigint)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_div_bigint(versioned_int, bigint)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION bigint_add_versioned_int(bigint, versioned_int)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION bigint_sub_versioned_int(bigint, versioned_int)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION bigint_mul_versioned_int(bigint, versioned_int)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION bigint_div_versioned_int(bigint, versioned_int)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_add_versioned_int(versioned_int, versioned_int)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_sub_versioned_int(versioned_int, versioned_int)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_mul_versioned_int(versioned_int, versioned_int)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_div_versioned_int(versioned_int, versioned_int)
+RETURNS bigint
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT IMMUTABLE;
+
 CREATE OPERATOR @ (
     LEFTARG = versioned_int,
     RIGHTARG = TIMESTAMPTZ,
@@ -313,7 +373,7 @@ CREATE OPERATOR > (
     PROCEDURE  = bigint_gt_versioned_int,
     COMMUTATOR = <,
     NEGATOR    = <=,
-    RESTRICT   = scalargtsel,      -- var (bigint literal) > col
+    RESTRICT   = scalargtsel,
     JOIN       = scalargtjoinsel
 );
 
@@ -405,6 +465,84 @@ CREATE OPERATOR <= (
     NEGATOR    = >,
     RESTRICT   = scalarlesel,
     JOIN       = scalarlejoinsel
+);
+
+CREATE OPERATOR + (
+    LEFTARG = versioned_int,
+    RIGHTARG = bigint,
+    PROCEDURE = versioned_int_add_bigint,
+    COMMUTATOR = +
+);
+
+CREATE OPERATOR - (
+    LEFTARG = versioned_int,
+    RIGHTARG = bigint,
+    PROCEDURE = versioned_int_sub_bigint
+);
+
+CREATE OPERATOR * (
+    LEFTARG = versioned_int,
+    RIGHTARG = bigint,
+    PROCEDURE = versioned_int_mul_bigint,
+    COMMUTATOR = *
+);
+
+CREATE OPERATOR / (
+    LEFTARG = versioned_int,
+    RIGHTARG = bigint,
+    PROCEDURE = versioned_int_div_bigint
+);
+
+CREATE OPERATOR + (
+    LEFTARG = bigint,
+    RIGHTARG = versioned_int,
+    PROCEDURE = bigint_add_versioned_int,
+    COMMUTATOR = +
+);
+
+CREATE OPERATOR - (
+    LEFTARG = bigint,
+    RIGHTARG = versioned_int,
+    PROCEDURE = bigint_sub_versioned_int
+);
+
+CREATE OPERATOR * (
+    LEFTARG = bigint,
+    RIGHTARG = versioned_int,
+    PROCEDURE = bigint_mul_versioned_int,
+    COMMUTATOR = *
+);
+
+CREATE OPERATOR / (
+    LEFTARG = bigint,
+    RIGHTARG = versioned_int,
+    PROCEDURE = bigint_div_versioned_int
+);
+
+CREATE OPERATOR + (
+    LEFTARG = versioned_int,
+    RIGHTARG = versioned_int,
+    PROCEDURE = versioned_int_add_versioned_int,
+    COMMUTATOR = +
+);
+
+CREATE OPERATOR - (
+    LEFTARG = versioned_int,
+    RIGHTARG = versioned_int,
+    PROCEDURE = versioned_int_sub_versioned_int
+);
+
+CREATE OPERATOR * (
+    LEFTARG = versioned_int,
+    RIGHTARG = versioned_int,
+    PROCEDURE = versioned_int_mul_versioned_int,
+    COMMUTATOR = *
+);
+
+CREATE OPERATOR / (
+    LEFTARG = versioned_int,
+    RIGHTARG = versioned_int,
+    PROCEDURE = versioned_int_div_versioned_int
 );
 
 CREATE OR REPLACE FUNCTION versioned_int_consistent(internal, versioned_int, smallint, oid, internal)

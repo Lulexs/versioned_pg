@@ -1444,3 +1444,221 @@ Datum versioned_int_le_versioned_int(PG_FUNCTION_ARGS)
     PG_RETURN_BOOL(a->entries[a->count - 1].value <=
                    b->entries[b->count - 1].value);
 }
+
+/*
+ *
+ * ARITHMETIC OPERATORS FOR verint and bigint
+ *
+ */
+/* versioned_int + bigint */
+PG_FUNCTION_INFO_V1(versioned_int_add_bigint);
+Datum versioned_int_add_bigint(PG_FUNCTION_ARGS)
+{
+    VersionedInt *vint = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    int64 arg = PG_GETARG_INT64(1);
+    int64 result;
+
+    if (vint->count <= 0)
+        PG_RETURN_NULL();
+
+    result = vint->entries[vint->count - 1].value + arg;
+    PG_RETURN_INT64(result);
+}
+
+/* versioned_int - bigint */
+PG_FUNCTION_INFO_V1(versioned_int_sub_bigint);
+Datum versioned_int_sub_bigint(PG_FUNCTION_ARGS)
+{
+    VersionedInt *vint = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    int64 arg = PG_GETARG_INT64(1);
+    int64 result;
+
+    if (vint->count <= 0)
+        PG_RETURN_NULL();
+
+    result = vint->entries[vint->count - 1].value - arg;
+    PG_RETURN_INT64(result);
+}
+
+/* versioned_int * bigint */
+PG_FUNCTION_INFO_V1(versioned_int_mul_bigint);
+Datum versioned_int_mul_bigint(PG_FUNCTION_ARGS)
+{
+    VersionedInt *vint = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    int64 arg = PG_GETARG_INT64(1);
+    int64 result;
+
+    if (vint->count <= 0)
+        PG_RETURN_NULL();
+
+    result = vint->entries[vint->count - 1].value * arg;
+    PG_RETURN_INT64(result);
+}
+
+/* versioned_int / bigint */
+PG_FUNCTION_INFO_V1(versioned_int_div_bigint);
+Datum versioned_int_div_bigint(PG_FUNCTION_ARGS)
+{
+    VersionedInt *vint = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    int64 arg = PG_GETARG_INT64(1);
+    int64 result;
+
+    if (vint->count <= 0)
+        PG_RETURN_NULL();
+
+    if (arg == 0)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("division by 0")));
+    }
+
+    result = vint->entries[vint->count - 1].value / arg;
+    PG_RETURN_INT64(result);
+}
+
+/*
+ *
+ * ARITHMETIC OPERATORS FOR bigint and verint
+ *
+ */
+/* bigint + verint */
+PG_FUNCTION_INFO_V1(bigint_add_versioned_int);
+Datum bigint_add_versioned_int(PG_FUNCTION_ARGS)
+{
+    int64 arg = PG_GETARG_INT64(0);
+    VersionedInt *vint = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+    int64 result;
+
+    if (vint->count <= 0)
+        PG_RETURN_NULL();
+
+    result = arg + vint->entries[vint->count - 1].value;
+    PG_RETURN_INT64(result);
+}
+
+/* bigint - verint */
+PG_FUNCTION_INFO_V1(bigint_sub_versioned_int);
+Datum bigint_sub_versioned_int(PG_FUNCTION_ARGS)
+{
+    int64 arg = PG_GETARG_INT64(0);
+    VersionedInt *vint = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+    int64 result;
+
+    if (vint->count <= 0)
+        PG_RETURN_NULL();
+
+    result = arg - vint->entries[vint->count - 1].value;
+    PG_RETURN_INT64(result);
+}
+
+/* bigint * verint */
+PG_FUNCTION_INFO_V1(bigint_mul_versioned_int);
+Datum bigint_mul_versioned_int(PG_FUNCTION_ARGS)
+{
+    int64 arg = PG_GETARG_INT64(0);
+    VersionedInt *vint = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+    int64 result;
+
+    if (vint->count <= 0)
+        PG_RETURN_NULL();
+
+    result = arg * vint->entries[vint->count - 1].value;
+    PG_RETURN_INT64(result);
+}
+
+/* bigint / verint */
+PG_FUNCTION_INFO_V1(bigint_div_versioned_int);
+Datum bigint_div_versioned_int(PG_FUNCTION_ARGS)
+{
+    int64 arg = PG_GETARG_INT64(0);
+    VersionedInt *vint = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+    int64 denominator, result;
+
+    if (vint->count <= 0)
+        PG_RETURN_NULL();
+
+    denominator = vint->entries[vint->count - 1].value;
+    if (denominator == 0)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("division by 0")));
+    }
+
+    result = arg / denominator;
+    PG_RETURN_INT64(result);
+}
+
+/*
+ *
+ * ARITHMETIC OPERATORS FOR verint and verint
+ *
+ */
+/* verint + verint */
+PG_FUNCTION_INFO_V1(versioned_int_add_versioned_int);
+Datum versioned_int_add_versioned_int(PG_FUNCTION_ARGS)
+{
+    VersionedInt *vint1 = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    VersionedInt *vint2 = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+    int64 result;
+
+    if (vint1->count <= 0 || vint2->count <= 0)
+        PG_RETURN_NULL();
+
+    result = vint1->entries[vint1->count - 1].value + vint2->entries[vint2->count - 1].value;
+    PG_RETURN_INT64(result);
+}
+
+/* verint - verint */
+PG_FUNCTION_INFO_V1(versioned_int_sub_versioned_int);
+Datum versioned_int_sub_versioned_int(PG_FUNCTION_ARGS)
+{
+    VersionedInt *vint1 = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    VersionedInt *vint2 = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+    int64 result;
+
+    if (vint1->count <= 0 || vint2->count <= 0)
+        PG_RETURN_NULL();
+
+    result = vint1->entries[vint1->count - 1].value - vint2->entries[vint2->count - 1].value;
+    PG_RETURN_INT64(result);
+}
+
+/* verint * verint */
+PG_FUNCTION_INFO_V1(versioned_int_mul_versioned_int);
+Datum versioned_int_mul_versioned_int(PG_FUNCTION_ARGS)
+{
+    VersionedInt *vint1 = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    VersionedInt *vint2 = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+    int64 result;
+
+    if (vint1->count <= 0 || vint2->count <= 0)
+        PG_RETURN_NULL();
+
+    result = vint1->entries[vint1->count - 1].value * vint2->entries[vint2->count - 1].value;
+    PG_RETURN_INT64(result);
+}
+
+/* verint / verint */
+PG_FUNCTION_INFO_V1(versioned_int_div_versioned_int);
+Datum versioned_int_div_versioned_int(PG_FUNCTION_ARGS)
+{
+    VersionedInt *vint1 = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    VersionedInt *vint2 = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(1));
+    int64 denominator, result;
+
+    if (vint1->count <= 0 || vint2->count <= 0)
+        PG_RETURN_NULL();
+
+    denominator = vint2->entries[vint2->count - 1].value;
+    if (denominator == 0)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("division by 0")));
+    }
+
+    result = vint1->entries[vint1->count - 1].value / denominator;
+    PG_RETURN_INT64(result);
+}

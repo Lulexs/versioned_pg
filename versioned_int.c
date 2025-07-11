@@ -92,6 +92,10 @@ PG_FUNCTION_INFO_V1(make_versioned_with_ts);
 PG_FUNCTION_INFO_V1(get_history);
 PG_FUNCTION_INFO_V1(versioned_int_at_time);
 PG_FUNCTION_INFO_V1(versioned_int_at_time_eq);
+PG_FUNCTION_INFO_V1(versioned_int_at_time_gt);
+PG_FUNCTION_INFO_V1(versioned_int_at_time_lt);
+PG_FUNCTION_INFO_V1(versioned_int_at_time_le);
+PG_FUNCTION_INFO_V1(versioned_int_at_time_ge);
 PG_FUNCTION_INFO_V1(versioned_int_enforce_modifier);
 
 // Gist support
@@ -513,13 +517,17 @@ Datum versioned_int_at_time_eq(PG_FUNCTION_ARGS)
     timestampDatum = GetAttributeByName(t, "ts", &isNull);
     if (isNull)
     {
-        ereport(ERROR, (errmsg("ts cannot be NULL")));
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("ts cannot be null")));
     }
 
     valueDatum = GetAttributeByName(t, "value", &isNull);
     if (isNull)
     {
-        ereport(ERROR, (errmsg("ts cannot be NULL")));
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("value cannot be null")));
     }
 
     value = DatumGetInt64(valueDatum);
@@ -532,6 +540,150 @@ Datum versioned_int_at_time_eq(PG_FUNCTION_ARGS)
     }
 
     PG_RETURN_BOOL(entry->value == value);
+}
+
+Datum versioned_int_at_time_lt(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    HeapTupleHeader t = PG_GETARG_HEAPTUPLEHEADER(1);
+    bool isNull;
+    Datum timestampDatum, valueDatum;
+    int64 value;
+    TimestampTz timestamp;
+    VersionedIntEntry *entry;
+
+    timestampDatum = GetAttributeByName(t, "ts", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("ts cannot be null")));
+    }
+
+    valueDatum = GetAttributeByName(t, "value", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("value cannot be null")));
+    }
+
+    value = DatumGetInt64(valueDatum);
+    timestamp = DatumGetTimestampTz(timestampDatum);
+
+    entry = get_versioned_ints_value_at_time(versionedInt, timestamp);
+    if (entry == NULL)
+        PG_RETURN_NULL();
+
+    PG_RETURN_BOOL(entry->value < value);
+}
+
+Datum versioned_int_at_time_gt(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    HeapTupleHeader t = PG_GETARG_HEAPTUPLEHEADER(1);
+    bool isNull;
+    Datum timestampDatum, valueDatum;
+    int64 value;
+    TimestampTz timestamp;
+    VersionedIntEntry *entry;
+
+    timestampDatum = GetAttributeByName(t, "ts", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("ts cannot be null")));
+    }
+
+    valueDatum = GetAttributeByName(t, "value", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("value cannot be null")));
+    }
+
+    value = DatumGetInt64(valueDatum);
+    timestamp = DatumGetTimestampTz(timestampDatum);
+
+    entry = get_versioned_ints_value_at_time(versionedInt, timestamp);
+    if (entry == NULL)
+        PG_RETURN_NULL();
+
+    PG_RETURN_BOOL(entry->value > value);
+}
+
+Datum versioned_int_at_time_le(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    HeapTupleHeader t = PG_GETARG_HEAPTUPLEHEADER(1);
+    bool isNull;
+    Datum timestampDatum, valueDatum;
+    int64 value;
+    TimestampTz timestamp;
+    VersionedIntEntry *entry;
+
+    timestampDatum = GetAttributeByName(t, "ts", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("ts cannot be null")));
+    }
+
+    valueDatum = GetAttributeByName(t, "value", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("value cannot be null")));
+    }
+
+    value = DatumGetInt64(valueDatum);
+    timestamp = DatumGetTimestampTz(timestampDatum);
+
+    entry = get_versioned_ints_value_at_time(versionedInt, timestamp);
+    if (entry == NULL)
+        PG_RETURN_NULL();
+
+    PG_RETURN_BOOL(entry->value <= value);
+}
+
+Datum versioned_int_at_time_ge(PG_FUNCTION_ARGS)
+{
+    VersionedInt *versionedInt = (VersionedInt *)PG_DETOAST_DATUM(PG_GETARG_DATUM(0));
+    HeapTupleHeader t = PG_GETARG_HEAPTUPLEHEADER(1);
+    bool isNull;
+    Datum timestampDatum, valueDatum;
+    int64 value;
+    TimestampTz timestamp;
+    VersionedIntEntry *entry;
+
+    timestampDatum = GetAttributeByName(t, "ts", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("ts cannot be null")));
+    }
+
+    valueDatum = GetAttributeByName(t, "value", &isNull);
+    if (isNull)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("value cannot be null")));
+    }
+
+    value = DatumGetInt64(valueDatum);
+    timestamp = DatumGetTimestampTz(timestampDatum);
+
+    entry = get_versioned_ints_value_at_time(versionedInt, timestamp);
+    if (entry == NULL)
+        PG_RETURN_NULL();
+
+    PG_RETURN_BOOL(entry->value >= value);
 }
 
 /*
@@ -599,6 +751,7 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
     TimestampTz time_at;
     GISTENTRY *entry = (GISTENTRY *)PG_GETARG_POINTER(0);
     Datum query_datum = PG_GETARG_DATUM(1);
+    StrategyNumber strategy = (StrategyNumber)PG_GETARG_UINT16(2);
     bool *recheck = (bool *)PG_GETARG_POINTER(4);
     verint_rect *key = (verint_rect *)DatumGetPointer(entry->key);
 
@@ -607,33 +760,76 @@ Datum versioned_int_consistent(PG_FUNCTION_ARGS)
     time_at_datum = GetAttributeByName(t, "ts", &isNull);
     if (isNull)
     {
-        ereport(ERROR, (errmsg("ts cannot be NULL")));
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("ts cannot be null")));
     }
+
     valueDatum = GetAttributeByName(t, "value", &isNull);
     if (isNull)
     {
-        ereport(ERROR, (errmsg("value cannot be NULL")));
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("value cannot be null")));
     }
 
     value = DatumGetInt64(valueDatum);
     time_at = DatumGetTimestampTz(time_at_datum);
 
-    if (key->lower_tzbound <= time_at &&
-        time_at <= key->upper_tzbound &&
-        key->lower_val <= value &&
-        value <= key->upper_val)
+    if (time_at < key->lower_tzbound || time_at > key->upper_tzbound)
     {
-        if (GIST_LEAF(entry))
-        {
-            *recheck = true;
-            PG_RETURN_BOOL(true);
-        }
-        else
-        {
-            *recheck = false;
-            PG_RETURN_BOOL(true);
-        }
+        *recheck = false;
+        PG_RETURN_BOOL(false);
     }
+
+    switch (strategy)
+    {
+    case 1: // @=
+        if (key->lower_val <= value && value <= key->upper_val)
+        {
+            *recheck = GIST_LEAF(entry);
+            PG_RETURN_BOOL(true);
+        }
+        break;
+
+    case 2: // @<
+        if (key->lower_val < value)
+        {
+            *recheck = GIST_LEAF(entry);
+            PG_RETURN_BOOL(true);
+        }
+        break;
+
+    case 3: // @>
+        if (key->upper_val > value)
+        {
+            *recheck = GIST_LEAF(entry);
+            PG_RETURN_BOOL(true);
+        }
+        break;
+
+    case 4: // @<=
+        if (key->lower_val <= value)
+        {
+            *recheck = GIST_LEAF(entry);
+            PG_RETURN_BOOL(true);
+        }
+        break;
+
+    case 5: // @>=
+        if (key->upper_val >= value)
+        {
+            *recheck = GIST_LEAF(entry);
+            PG_RETURN_BOOL(true);
+        }
+        break;
+
+    default:
+        ereport(ERROR,
+                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                 errmsg("gist index access method strategy not supported")));
+    }
+
     *recheck = false;
     PG_RETURN_BOOL(false);
 }

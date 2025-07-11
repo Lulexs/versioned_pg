@@ -71,6 +71,26 @@ CREATE FUNCTION versioned_int_at_time_eq(versioned_int, ts_int)
     AS 'MODULE_PATHNAME'
     LANGUAGE C STRICT IMMUTABLE;
 
+CREATE FUNCTION versioned_int_at_time_lt(versioned_int, ts_int)
+    RETURNS BOOLEAN
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_at_time_gt(versioned_int, ts_int)
+    RETURNS BOOLEAN
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_at_time_le(versioned_int, ts_int)
+    RETURNS BOOLEAN
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C STRICT IMMUTABLE;
+
+CREATE FUNCTION versioned_int_at_time_ge(versioned_int, ts_int)
+    RETURNS BOOLEAN
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C STRICT IMMUTABLE;
+
 CREATE FUNCTION versioned_int_eq_bigint(versioned_int, BIGINT)
     RETURNS BOOLEAN
     AS 'MODULE_PATHNAME'
@@ -173,6 +193,38 @@ CREATE OPERATOR @= (
     PROCEDURE = versioned_int_at_time_eq,
     RESTRICT = eqsel,
     JOIN = eqjoinsel
+);
+
+CREATE OPERATOR @< (
+    LEFTARG = versioned_int,
+    RIGHTARG = ts_int,
+    PROCEDURE = versioned_int_at_time_lt,
+    RESTRICT = scalarltsel,
+    JOIN = scalarltjoinsel
+);
+
+CREATE OPERATOR @> (
+    LEFTARG = versioned_int,
+    RIGHTARG = ts_int,
+    PROCEDURE = versioned_int_at_time_gt,
+    RESTRICT = scalargtsel,
+    JOIN = scalargtjoinsel
+);
+
+CREATE OPERATOR @<= (
+    LEFTARG = versioned_int,
+    RIGHTARG = ts_int,
+    PROCEDURE = versioned_int_at_time_le,
+    RESTRICT = scalarltsel,
+    JOIN = scalarltjoinsel
+);
+
+CREATE OPERATOR @>= (
+    LEFTARG = versioned_int,
+    RIGHTARG = ts_int,
+    PROCEDURE = versioned_int_at_time_ge,
+    RESTRICT = scalargtsel,
+    JOIN = scalargtjoinsel
 );
 
 CREATE OPERATOR = (
@@ -407,6 +459,10 @@ LANGUAGE C STRICT;
 CREATE OPERATOR CLASS gist_versioned_int_ops
     DEFAULT FOR TYPE versioned_int USING gist AS
         OPERATOR        1           @= (versioned_int, ts_int),
+        OPERATOR        2           @< (versioned_int, ts_int),
+        OPERATOR        3           @> (versioned_int, ts_int),
+        OPERATOR        4           @<= (versioned_int, ts_int),
+        OPERATOR        5           @>= (versioned_int, ts_int),
         FUNCTION        1           versioned_int_consistent,
         FUNCTION        2           versioned_int_union,
         FUNCTION        3           versioned_int_compress,

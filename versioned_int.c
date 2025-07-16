@@ -46,7 +46,6 @@ typedef struct
     int32 count;
     int32 cap;
     int32 pad_;
-    int64 valid;
     VersionedIntEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } VersionedInt;
 

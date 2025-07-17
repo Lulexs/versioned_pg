@@ -724,15 +724,11 @@ Datum verint_rect_out(PG_FUNCTION_ARGS)
 {
     verint_rect *rect = (verint_rect *)PG_GETARG_POINTER(0);
 
-    const char *lower_ts_str = timestamptz_to_str(rect->lower_tzbound);
-
-    const char *upper_ts_str = timestamptz_to_str(rect->upper_tzbound);
-
-    char *result = psprintf("(%s,%s,%lld,%lld)",
-                            lower_ts_str,
-                            upper_ts_str,
-                            (long long)rect->lower_val,
-                            (long long)rect->upper_val);
+    char *result = psprintf("(lower_raw=%ld,upper_raw=%ld,%ld,%ld)",
+                            rect->lower_tzbound,
+                            rect->upper_tzbound,
+                            rect->lower_val,
+                            rect->upper_val);
 
     PG_RETURN_CSTRING(result);
 }

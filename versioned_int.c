@@ -724,7 +724,7 @@ Datum verint_rect_out(PG_FUNCTION_ARGS)
 {
     verint_rect *rect = (verint_rect *)PG_GETARG_POINTER(0);
 
-    char *result = psprintf("(lower_raw=%ld,upper_raw=%ld,%ld,%ld)",
+    char *result = psprintf("%ld,%ld,%ld,%ld",
                             rect->lower_tzbound,
                             rect->upper_tzbound,
                             rect->lower_val,

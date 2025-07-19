@@ -54,6 +54,11 @@ CREATE TYPE ts_int AS (
     value BIGINT
 );
 
+CREATE FUNCTION make_history(ts_int[])
+    RETURNS versioned_int
+    AS 'MODULE_PATHNAME'
+    LANGUAGE C VOLATILE;
+
 CREATE TYPE __int_history AS (updated_at TIMESTAMPTZ, value BIGINT);
 
 CREATE FUNCTION get_history(versioned_int)

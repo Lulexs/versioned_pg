@@ -88,6 +88,7 @@ PG_FUNCTION_INFO_V1(versioned_int_typemod_in);
 PG_FUNCTION_INFO_V1(versioned_int_typemod_out);
 PG_FUNCTION_INFO_V1(make_versioned);
 PG_FUNCTION_INFO_V1(make_versioned_with_ts);
+PG_FUNCTION_INFO_V1(make_history);
 PG_FUNCTION_INFO_V1(get_history);
 PG_FUNCTION_INFO_V1(versioned_int_at_time);
 PG_FUNCTION_INFO_V1(versioned_int_at_time_eq);
@@ -412,6 +413,95 @@ Datum make_versioned_with_ts(PG_FUNCTION_ARGS)
         memcpy(&newVersionedInt->entries[idx + 1], &versionedInt->entries[idx], (versionedInt->count - idx) * sizeof(VersionedIntEntry));
         newVersionedInt->entries[idx].value = newValue;
         newVersionedInt->entries[idx].time = time;
+    }
+
+    PG_RETURN_POINTER(newVersionedInt);
+}
+
+/*
+ *
+ * make_history is a function that takes one argument - array
+ * of (value, timestamptz) pairs SORTED BY TIMESTAMPTZ ASC,
+ * and using them creates new versioned int. Used for bulk
+ * inserts, to avoid huge reallocations of memory.
+ *
+ */
+Datum make_history(PG_FUNCTION_ARGS)
+{
+    ArrayType *input_array;
+    Size size;
+    VersionedInt *newVersionedInt;
+    Datum *array_datums;
+    bool *array_nulls;
+    int array_count, i, array_length;
+    HeapTupleHeader tuple;
+    Datum value_datum, ts_datum;
+    bool value_isnull, ts_isnull;
+
+    if (PG_ARGISNULL(0))
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED)),
+                errmsg("Cannot insert \"null\" as the value of versioned_int type"));
+    }
+    input_array = PG_GETARG_ARRAYTYPE_P(0);
+
+    if (ARR_NDIM(input_array) != 1)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR)),
+                errmsg("make_history expects 1-dimensional array"));
+    }
+    array_length = ARR_DIMS(input_array)[0];
+    if (array_length <= 0)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR)),
+                errmsg("make_history expects non-empty array"));
+    }
+    size = sizeof(VersionedInt) + (array_length + 10) * sizeof(VersionedIntEntry);
+    if (size >= (Size)MAX_VERSIONED_INT_SIZE)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_OUT_OF_MEMORY)),
+                errmsg("Inserting history push column pass the size of 512MB. Aborting"));
+    }
+    newVersionedInt = (VersionedInt *)palloc0(size);
+
+    deconstruct_array(input_array, get_fn_expr_argtype(fcinfo->flinfo, 1),
+                      -1, false, 'i', &array_datums, &array_nulls, &array_count);
+
+    SET_VARSIZE(newVersionedInt, size);
+    newVersionedInt->cap = (array_length + 10);
+    newVersionedInt->count = array_length;
+
+    for (i = 0; i < array_count; i++)
+    {
+        if (array_nulls[i])
+        {
+            ereport(ERROR,
+                    (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED)),
+                    errmsg("Null entries not allowed in make_history array"));
+        }
+        tuple = DatumGetHeapTupleHeader(array_datums[i]);
+        value_datum = GetAttributeByName(tuple, "value", &value_isnull);
+
+        if (value_isnull)
+        {
+            ereport(ERROR,
+                    (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED)),
+                    errmsg("Value cannot be null in version_entry"));
+        }
+        newVersionedInt->entries[i].value = DatumGetInt64(value_datum);
+
+        ts_datum = GetAttributeByName(tuple, "ts", &ts_isnull);
+        if (ts_isnull)
+        {
+            ereport(ERROR,
+                    (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED)),
+                    errmsg("Timestamp cannot be null in version_entry"));
+        }
+        newVersionedInt->entries[i].time = DatumGetTimestampTz(ts_datum);
     }
 
     PG_RETURN_POINTER(newVersionedInt);
